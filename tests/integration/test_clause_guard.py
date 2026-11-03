@@ -268,6 +268,20 @@ def test_03b_stranger_registers_by_paying_the_fee(client, stranger, contract):
     assert policy["creator"].lower() == stranger.address.lower()
     assert int(policy["fee_paid"]) == POLICY_FEE_WEI
 
+def test_03c_creator_can_update_their_paid_policy(client, stranger, contract):
+    _expect_ok(
+        client,
+        stranger,
+        contract,
+        "update_policy",
+        ["paid-policy", "Paid policy v2", RULES_URL, GUIDANCE + " Updated."],
+    )
+
+    policy = _read(client, contract, "get_policy", ["paid-policy"])
+    assert policy["name"] == "Paid policy v2"
+    assert int(policy["version"]) == 2
+
+
 def test_04_insecure_source_url_is_refused(client, account, contract):
     _expect_denied(
         client,
@@ -523,6 +537,51 @@ def test_19_owner_deactivates_and_reactivates(client, account, contract):
 
     _expect_ok(client, account, contract, "set_policy_active", ["us-ofac", True])
     assert _read(client, contract, "get_policy", ["us-ofac"])["active"] is True
+
+
+def test_19b_policy_fee_is_recorded_and_withdrawable(client, account, contract, stranger):
+    fee = _read(client, contract, "get_policy_fee")
+    assert int(fee["fee_wei"]) == POLICY_FEE_WEI
+    assert int(fee["pending"]) >= POLICY_FEE_WEI
+
+    # Only the owner may take the fees out.
+    _expect_denied(client, stranger, contract, "withdraw_policy_fees")
+
+    _expect_ok(client, account, contract, "withdraw_policy_fees")
+
+    after = _read(client, contract, "get_policy_fee")
+    assert int(after["pending"]) == 0
+
+    # Nothing left to withdraw, so the call is a definite rollback.
+    _expect_denied(client, account, contract, "withdraw_policy_fees")
+
+
+def test_19c_every_view_answers(client, account, contract):
+    assert _read(client, contract, "get_owner").lower() == account.address.lower()
+    assert _read(client, contract, "get_pending_owner") == "0x" + "0" * 40
+
+    policies = _read(client, contract, "get_policies")
+    assert "eu-payments" in policies
+    assert _read(client, contract, "get_policy", ["eu-payments"])["policy_id"] == "eu-payments"
+
+    assessments = _read(client, contract, "get_assessments")
+    ids = _read(client, contract, "get_assessment_ids")["ids"]
+    assert assessments and ids
+    assert _read(client, contract, "get_assessment", [ids[0]])["assessment_id"] == ids[0]
+
+    escrows = _read(client, contract, "get_escrows")
+    assert escrows
+    escrow_id = next(iter(escrows))
+    assert _read(client, contract, "get_escrow", [escrow_id])["escrow_id"] == escrow_id
+    assert isinstance(_read(client, contract, "is_escrow_expired", [escrow_id]), bool)
+
+    ledger = _read(client, contract, "get_ledger")
+    assert {"total_deposited", "total_out", "locked_total"} <= set(ledger)
+    assert int(_read(client, contract, "get_balance")) >= 0
+
+    summary = _read(client, contract, "get_summary")
+    assert int(summary["total"]) == len(assessments)
+    assert int(summary["policies"]) == len(policies)
 
 
 def test_20_private_host_is_refused(client, account, contract):
