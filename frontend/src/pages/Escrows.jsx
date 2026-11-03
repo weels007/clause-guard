@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { humanizeError } from "../contract.js";
-import { OWNER_ADDRESS, STRANGER_ADDRESS } from "../data.js";
+import { STRANGER_ADDRESS } from "../data.js";
 import { formatWei, shortAddress } from "../format.js";
 import { Pill, toast } from "../ui.jsx";
 
