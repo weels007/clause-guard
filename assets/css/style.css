@@ -384,7 +384,20 @@ code { background: rgba(139, 124, 246, 0.12); padding: 0.1em 0.4em; border-radiu
 .list-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .empty { color: var(--faint); font-size: 14px; padding: 18px 0; }
-.addr { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-all; }
+.addr { color: var(--muted); font-family: var(--mono); font-size: 12px; word-break: break-all; }
+
+/* Grid and flex children default to min-width:auto, so one wide child can push
+   a whole panel past the viewport on narrow screens. Let them shrink. */
+.two-col > *,
+.assess-layout > *,
+.policies-layout > *,
+.stat-grid > *,
+.panel,
+.panel-head,
+.list,
+.list-item { min-width: 0; }
+
+.kv dd, .hint { overflow-wrap: anywhere; }
 
 /* ── forms ────────────────────────────────────────────────────── */
 

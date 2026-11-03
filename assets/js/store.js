@@ -316,7 +316,8 @@ export function createStore() {
       const policy = state.policies[policy_id];
       if (!policy) throw new ContractError("[EXPECTED]:unknown_policy", "Choose a policy first.");
       if (!policy.active) throw new ContractError("[EXPECTED]:policy_inactive", "That policy is disabled.");
-      if (state.summary().total >= 5000) throw new ContractError("[EXPECTED]:assessment_limit", "This contract has reached its assessment limit.");
+      if (Object.keys(state.assessments).length >= 5000)
+        throw new ContractError("[EXPECTED]:assessment_limit", "This contract has reached its assessment limit.");
 
       const cleanSubject = sanitize(subject, 160);
       if (!cleanSubject) throw new ContractError("[EXPECTED]:missing_subject", "A subject is required.");

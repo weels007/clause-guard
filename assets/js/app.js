@@ -153,8 +153,14 @@ function render() {
 }
 
 window.addEventListener("hashchange", () => {
+  /* Jump, don't animate: html{scroll-behavior:smooth} would glide from the old
+     position across a layout that has already been swapped out. */
+  const root = document.documentElement;
+  const previous = root.style.scrollBehavior;
+  root.style.scrollBehavior = "auto";
   window.scrollTo(0, 0);
   render();
+  root.style.scrollBehavior = previous;
 });
 
 /* ── landing ──────────────────────────────────────────────────────────── */
@@ -473,6 +479,9 @@ async function runAssessment(form) {
       resultState.textContent = "running";
       resultState.className = "pill warn";
     }
+    /* Drop the previous verdict first: the store emits when the new one lands,
+       and renderAssess would otherwise flash the old result over the progress. */
+    lastRecord = null;
     renderProgress(resultBody, 0);
     await wait(320);
     renderProgress(resultBody, 1);
