@@ -8,11 +8,13 @@ name: Integration (studionet)
 
 on:
   push:
-    # Only a change to the contract itself warrants a fresh deployment. Test,
-    # script and README edits are covered by the direct-mode suite; run this by
-    # hand when a test fix needs the real network.
+    # The contract, the suite that drives it, and the wallet loader it needs.
+    # Each run is a single deploy, so a test change is worth one run.
     paths:
       - "contracts/**"
+      - "tests/integration/**"
+      - "scripts/**"
+      - ".github/workflows/integration.yml"
   workflow_dispatch:
 
 jobs:
