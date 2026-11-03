@@ -251,7 +251,7 @@ def test_orphan_cannot_be_released(direct_vm, direct_deploy, direct_owner, direc
 
 
 def test_escrow_is_not_expired_when_created(
-    direct_vm, direct_deploy, direct_owner, direct_alice
+    direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob
 ):
     direct_vm.warp("2024-01-01T00:00:00Z")
     contract, assessment_id = _compliant_assessment(
