@@ -224,6 +224,12 @@ repository:
 | Fundable test account (tester1 — signer, owner, escrow funder) | `0xE8b3e800d08727D25156a44cD1609F793bd0Af5a` |
 | Second test account (tester2 — escrow payee and the stranger) | `0x0C0Fd005478Cef9219451BBD19Dfc6C0586fC1Ad` |
 
+The **Wallet Smoke** workflow (`python scripts/smoke.py`) drives the pinned
+contract itself with those two wallets: reads, a paid policy registration, an
+edit by its creator, an enable/disable cycle, an orphan deposit and its refund,
+denied attempts from the stranger, the owner's fee withdrawal and a real
+assessment — printing every transaction hash for the explorer trail.
+
 ### Funding the escrow for real
 
 1. send GEN to the tester1 address above — a fraction of one GEN is plenty, the
