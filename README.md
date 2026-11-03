@@ -206,22 +206,21 @@ Two facts about it:
   either way.
 
 `.github/workflows/integration.yml` runs the suite when the contract changes
-or on demand (`workflow_dispatch`): it deploys to studionet, pays for real
-execution, and depends on live web and LLM behaviour.
+or on demand (`workflow_dispatch`): it deploys one contract to studionet, drives
+it with the two tester wallets (owner and stranger, including a real value
+transfer), and depends on live web and LLM behaviour.
 
 ## Addresses
 
-The contract address changes on every run, so the only address worth funding is
-the pinned test account:
+The console reads one pinned contract: `frontend/src/config.js` holds its
+address, and the deploy workflow rewrites it whenever the contract source
+changes. The two test accounts never change, because their keystores live in the
+repository:
 
 | Role | Address |
 |---|---|
-| Fundable test account (tester1 — signer and escrow funder) | `0xE8b3e800d08727D25156a44cD1609F793bd0Af5a` |
+| Fundable test account (tester1 — signer, owner, escrow funder) | `0xE8b3e800d08727D25156a44cD1609F793bd0Af5a` |
 | Second test account (tester2 — escrow payee and the stranger) | `0x0C0Fd005478Cef9219451BBD19Dfc6C0586fC1Ad` |
-
-Each run deploys a new contract, so a contract address from an earlier run is
-dead. The two accounts above stay the same because their keystores live in the
-repository (`tests/tester1-keystore.json`, `tests/tester2-keystore.json`).
 
 ### Funding the escrow for real
 
