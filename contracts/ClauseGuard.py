@@ -56,11 +56,12 @@ ESCROW_TIMEOUT_SECONDS = 30 * 86400
 
 ZERO_HEX = "0" * 40
 
-# Stored risk scores are quantised to this step inside the non-deterministic
-# block, before anything is compared. Both nodes therefore agree on the exact
-# value that gets written to storage, instead of agreeing only that two raw
-# scores happen to fall in the same band.
-RISK_BUCKET_STEP = 10
+# Stored risk is a coarse level, not a model-generated number. Two independent
+# LLM runs rarely agree on the same integer but reliably agree on a bucket, and
+# the equivalence-principle docs recommend comparing only the decision fields.
+# The integer score stored alongside is derived from the agreed level, so the
+# number is still fully consensus-bound.
+RISK_LEVELS = (BAND_LOW, BAND_MEDIUM, BAND_HIGH)
 
 POLICY_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789-_."
 
@@ -174,35 +175,24 @@ def _pay_out(to, value: int) -> None:
     _Eoa(_coerce_addr(to)).emit_transfer(value=u256(value), on="finalized")
 
 
-def _risk_band(score: int) -> str:
-    if score >= 67:
-        return BAND_HIGH
-    if score >= 34:
+def _normalize_level(raw: str) -> str:
+    value = raw.strip().upper()
+    if value in ("LOW", "MINIMAL", "NEGLIGIBLE", "LOW_RISK"):
+        return BAND_LOW
+    if value in ("MEDIUM", "MODERATE", "MID", "MEDIUM_RISK"):
         return BAND_MEDIUM
-    return BAND_LOW
+    if value in ("HIGH", "SEVERE", "CRITICAL", "HIGH_RISK"):
+        return BAND_HIGH
+    raise gl.vm.UserError(ERROR_LLM + ":unknown_risk_level:" + value[:20])
 
 
-def _clamp_score(value) -> int:
-    try:
-        score = int(round(float(str(value).strip())))
-    except (TypeError, ValueError):
-        raise gl.vm.UserError(ERROR_LLM + ":bad_risk_score")
-    if score < 0:
-        return 0
-    if score > 100:
-        return 100
-    return score
-
-
-def _bucket_score(value) -> int:
-    """Quantise a risk score so the stored value is exactly the agreed value.
-
-    Integer arithmetic only: no float division anywhere in the contract.
-    """
-    score = _clamp_score(value)
-    step = RISK_BUCKET_STEP
-    half = step // 2
-    return ((score + half) // step) * step
+def _score_for_level(level: str) -> int:
+    """Representative integer for a level, so the stored number cannot drift."""
+    if level == BAND_HIGH:
+        return 80
+    if level == BAND_LOW:
+        return 20
+    return 50
 
 
 def _fold(text: str) -> str:
@@ -296,30 +286,41 @@ def _coerce_payload(raw) -> dict:
 
 
 def _build_verdict(raw, rules_text: str) -> dict:
-    """Turn a raw LLM response into the canonical, consensus-bound payload.
+    """Turn a raw LLM response into the payload validators compare.
 
-    Every key returned here is either compared exactly between leader and
-    validator (verdict, risk_bucket) or deterministically checked against the
-    fetched source (rule_quote). Nothing else is returned, so unverifiable text
-    cannot leak into the stored decision.
+    Only two coarse decision fields are returned for comparison — the verdict
+    and the risk level. An integer score is exactly the kind of value two
+    independent models disagree on, and the equivalence-principle docs say to
+    compare only the fields that matter.
+
+    An ungrounded citation cannot certify anything, but it must not deadlock
+    consensus either: the verdict is downgraded to REVIEW and the quote dropped,
+    rather than failing the whole assessment.
     """
     payload = _coerce_payload(raw)
 
     raw_decision = payload.get("verdict", payload.get("decision", ""))
     decision = _normalize_decision(str(raw_decision))
 
-    score = _bucket_score(payload.get("risk_score", payload.get("riskScore", 50)))
-
-    raw_quote = payload.get("rule_quote", payload.get("ruleQuote", ""))
-    quote = _ground_quote(raw_quote, rules_text)
+    raw_level = payload.get("risk_level", payload.get("riskLevel", ""))
+    level = _normalize_level(str(raw_level))
 
     findings = _clean_text(str(payload.get("findings", payload.get("rationale", ""))))
+
+    raw_quote = payload.get("rule_quote", payload.get("ruleQuote", ""))
+    quote = ""
+    try:
+        quote = _ground_quote(raw_quote, rules_text)
+    except gl.vm.UserError:
+        decision = DECISION_REVIEW
+        findings = (findings + " [citation could not be grounded in the source]").strip()
+
     if len(findings) > MAX_FINDINGS_CHARS:
         findings = findings[:MAX_FINDINGS_CHARS]
 
     return {
         "verdict": decision,
-        "risk_bucket": score,
+        "risk_level": level,
         "rule_quote": quote,
         "findings": findings,
     }
@@ -624,7 +625,7 @@ context: {clean_context}
 Respond with JSON only, nothing else:
 {{
   "verdict": "COMPLIANT" or "NON_COMPLIANT" or "REVIEW",
-  "risk_score": integer between 0 and 100,
+  "risk_level": "LOW" or "MEDIUM" or "HIGH",
   "rule_quote": "the exact sentence copied verbatim from the rules text that drove the decision",
   "findings": "one or two sentences of explanation"
 }}
@@ -633,9 +634,11 @@ Decision rules:
 - COMPLIANT only when the fetched rules clearly allow the transaction.
 - NON_COMPLIANT when a rule clearly prohibits or restricts it.
 - REVIEW when the rules are silent, ambiguous, or the evidence is insufficient.
-- rule_quote must be copied character for character from the rules text; it is
-  checked against the source, and an invented quote fails the whole assessment.
-- risk_score 0 means no residual risk, 100 means maximal risk.
+- rule_quote must be copied character for character from the rules text; a quote
+  that is not found in the source cannot certify anything and the verdict is
+  recorded as REVIEW.
+- risk_level is the residual risk of accepting the transaction: LOW, MEDIUM or
+  HIGH.
 """
 
             raw = gl.nondet.exec_prompt(prompt, response_format="json")
@@ -653,7 +656,7 @@ Decision rules:
 
             if leader_data.get("verdict") != own.get("verdict"):
                 return False
-            return leader_data.get("risk_bucket") == own.get("risk_bucket")
+            return leader_data.get("risk_level") == own.get("risk_level")
 
         verdict = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
@@ -664,8 +667,12 @@ Decision rules:
         if decision not in (DECISION_COMPLIANT, DECISION_NON_COMPLIANT, DECISION_REVIEW):
             raise gl.vm.UserError(ERROR_LLM + ":invalid_verdict")
 
-        score = _bucket_score(verdict.get("risk_bucket", 50))
-        band = _risk_band(score)
+        level = str(verdict.get("risk_level", BAND_MEDIUM))
+        if level not in RISK_LEVELS:
+            raise gl.vm.UserError(ERROR_LLM + ":invalid_risk_level")
+
+        score = _score_for_level(level)
+        band = level
 
         self.next_assessment_id += 1
         assessment_id = "ca-" + str(self.next_assessment_id)

@@ -20,6 +20,14 @@ GUIDANCE = "Transfers above 10000 EUR to a sanctioned counterparty are prohibite
 QUOTE = "sanctioned transfers are prohibited"
 
 
+def _level(score):
+    if score >= 67:
+        return "HIGH"
+    if score >= 34:
+        return "MEDIUM"
+    return "LOW"
+
+
 def _mock(direct_vm, verdict, score):
     direct_vm.mock_web(
         r".*rules\.example\.com.*",
@@ -30,7 +38,7 @@ def _mock(direct_vm, verdict, score):
         json.dumps(
             {
                 "verdict": verdict,
-                "risk_score": score,
+                "risk_level": _level(score),
                 "rule_quote": QUOTE,
                 "findings": "article 4",
             }

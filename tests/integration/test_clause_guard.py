@@ -222,7 +222,8 @@ def test_08_assessment_reaches_consensus(client, account, contract):
     assert record["policy_id"] == POLICY_ID
     assert record["verdict"] in ALLOWED_VERDICTS
     assert record["risk_band"] in ("LOW", "MEDIUM", "HIGH")
-    assert int(record["risk_score"]) % 10 == 0, "stored score must be a bucket"
+    # The stored number is derived from the agreed level, never from the model.
+    assert int(record["risk_score"]) in (20, 50, 80)
     assert record["submit_ref"] == "ref-1"
     assert len(record["rule_quote"]) >= 20
 

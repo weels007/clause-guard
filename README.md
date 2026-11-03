@@ -22,16 +22,17 @@ validators agree on the outcome before state changes.
    verdict stays reproducible against the rules that produced it.
 2. **Rule fetch** — inside the non-deterministic block the contract renders the
    rules page as text (truncated to `MAX_RULES_CHARS`).
-3. **LLM decision** — the model returns `verdict`, a raw `risk_score`, a
-   `rule_quote`, and `findings`. Two normalisations happen before anything is
-   compared: the score is quantised to a 10-point bucket, and the quote must be a
-   verbatim substring of the fetched rules text, so a hallucinated citation fails
-   the assessment instead of being stored.
+3. **LLM decision** — the model returns `verdict` (three classes), a
+   `risk_level` (LOW / MEDIUM / HIGH), a `rule_quote`, and `findings`. A citation
+   that is not found in the fetched rules cannot certify anything: the verdict is
+   downgraded to `REVIEW` and the quote dropped, rather than failing the whole
+   assessment — a hard failure leaves consensus with no decision to agree on.
 4. **Validator** — re-runs the whole fetch-and-judge step independently and
-   requires exact equality on `verdict` and on the quantised `risk_bucket`.
-   Because the stored score *is* the bucket, the value written on-chain is
-   precisely the value both nodes agreed on — never two raw scores that merely
-   shared a band.
+   requires exact equality on `verdict` and `risk_level`. Those are the two
+   coarse decision fields; an integer score is exactly the value two independent
+   models disagree on, and when validators disagree the transaction becomes
+   *undetermined* and writes nothing. The stored integer is derived from the
+   agreed level (LOW 20, MEDIUM 50, HIGH 80), so it cannot drift either.
 5. **Storage** — only after consensus: the assessment is written (with policy
    version, verified quote, and submit reference), the id counter advances, and
    the O(1) summary counters increment.
@@ -83,8 +84,9 @@ on differing stack detail.
 | `get_balance()` | GEN actually held by the contract |
 | `get_summary()` | totals: total, compliant, non_compliant, review, high_risk, policies |
 
-Risk bands: `LOW` (0–33), `MEDIUM` (34–66), `HIGH` (67–100), computed from the
-quantised score that consensus agreed on.
+Risk levels: `LOW` (stored as 20), `MEDIUM` (50), `HIGH` (80). The level is the
+value consensus agrees on; the number is a fixed representative of it, so two
+runs can never store different numbers for the same decision.
 
 ## Escrow: money only its owner can move
 

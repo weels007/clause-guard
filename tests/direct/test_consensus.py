@@ -3,8 +3,9 @@
 Direct mode captures the validator of the last run_nondet call, so these tests
 swap mocks and then replay the validator against the stored leader result.
 
-The stored risk score is quantised to a 10-point bucket before comparison, so
-agreement means "same bucket", not "close enough".
+Consensus binds the two coarse decision fields only — the verdict and the risk
+level. Two independent models rarely agree on an integer score, and the
+equivalence-principle docs recommend comparing just the fields that matter.
 """
 
 import json
@@ -22,13 +23,21 @@ def _mock_rules(direct_vm):
     )
 
 
+def _level(score):
+    if score >= 67:
+        return "HIGH"
+    if score >= 34:
+        return "MEDIUM"
+    return "LOW"
+
+
 def _mock_verdict(direct_vm, verdict, score):
     direct_vm.mock_llm(
         r".*\[\[COMPLIANCE_ASSESSMENT\]\].*",
         json.dumps(
             {
                 "verdict": verdict,
-                "risk_score": score,
+                "risk_level": _level(score),
                 "rule_quote": QUOTE,
                 "findings": "article 4",
             }
@@ -53,10 +62,10 @@ def test_validator_accepts_identical_result(direct_vm, direct_deploy, direct_own
     assert direct_vm.run_validator() is True
 
 
-def test_validator_accepts_same_bucket_from_different_raw_scores(
+def test_validator_accepts_same_level_from_different_raw_scores(
     direct_vm, direct_deploy, direct_owner
 ):
-    # 82 and 84 both quantise to 80, so they agree on the stored value.
+    # 82 and 84 are both HIGH, so they agree on the level consensus binds.
     _prepare(direct_vm, direct_deploy, direct_owner, "NON_COMPLIANT", 82)
 
     direct_vm.clear_mocks()
@@ -66,18 +75,18 @@ def test_validator_accepts_same_bucket_from_different_raw_scores(
     assert direct_vm.run_validator() is True
 
 
-def test_validator_rejects_same_band_but_different_bucket(
+def test_validator_accepts_same_level_across_the_band(
     direct_vm, direct_deploy, direct_owner
 ):
-    # 45 and 62 are both MEDIUM, but they store 50 and 60: different baselines
-    # must not pass consensus.
+    # 45 and 62 are both MEDIUM. The level is what is compared, so the stored
+    # score (derived from the level) cannot drift between runs either.
     _prepare(direct_vm, direct_deploy, direct_owner, "REVIEW", 45)
 
     direct_vm.clear_mocks()
     _mock_rules(direct_vm)
     _mock_verdict(direct_vm, "REVIEW", 62)
 
-    assert direct_vm.run_validator() is False
+    assert direct_vm.run_validator() is True
 
 
 def test_validator_rejects_different_bucket(

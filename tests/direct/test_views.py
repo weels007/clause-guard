@@ -18,7 +18,7 @@ def _mock(direct_vm, verdict, score):
         json.dumps(
             {
                 "verdict": verdict,
-                "risk_score": score,
+                "risk_level": "HIGH" if score >= 67 else ("MEDIUM" if score >= 34 else "LOW"),
                 "rule_quote": QUOTE,
                 "findings": "see article 4",
             }

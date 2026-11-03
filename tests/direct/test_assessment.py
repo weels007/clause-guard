@@ -18,13 +18,21 @@ def _mock_rules(direct_vm, body=RULES_BODY):
     direct_vm.mock_web(r".*rules\.example\.com.*", {"status": 200, "body": body})
 
 
+def _level(score):
+    if score >= 67:
+        return "HIGH"
+    if score >= 34:
+        return "MEDIUM"
+    return "LOW"
+
+
 def _mock_verdict(direct_vm, verdict, score, findings="Article 4 applies.", quote=QUOTE):
     direct_vm.mock_llm(
         r".*\[\[COMPLIANCE_ASSESSMENT\]\].*",
         json.dumps(
             {
                 "verdict": verdict,
-                "risk_score": score,
+                "risk_level": _level(score),
                 "rule_quote": quote,
                 "findings": findings,
             }
@@ -65,8 +73,8 @@ def test_compliant_transaction_is_stored(
     assert record["counterparty"] == "Acme Supplier GmbH"
     assert record["amount"] == "4200 EUR"
     assert record["verdict"] == "COMPLIANT"
-    # 12 is quantised to the 10-point bucket both nodes compare.
-    assert record["risk_score"] == 10
+    # The stored number is derived from the agreed level, not from the model.
+    assert record["risk_score"] == 20
     assert record["risk_band"] == "LOW"
     assert record["rule_quote"].lower() == QUOTE.lower()
     assert record["submit_ref"] == "ref-1"
@@ -92,7 +100,7 @@ def test_non_compliant_transaction_is_high_risk(
 
     record = contract.get_assessment(assessment_id)
     assert record["verdict"] == "NON_COMPLIANT"
-    assert record["risk_score"] == 90
+    assert record["risk_score"] == 80
     assert record["risk_band"] == "HIGH"
 
 
@@ -114,11 +122,11 @@ def test_ambiguous_case_is_sent_to_review(
 
     record = contract.get_assessment(assessment_id)
     assert record["verdict"] == "REVIEW"
-    assert record["risk_score"] == 60
+    assert record["risk_score"] == 50
     assert record["risk_band"] == "MEDIUM"
 
 
-def test_risk_score_is_clamped(direct_vm, direct_deploy, direct_owner):
+def test_high_risk_level_maps_to_a_fixed_score(direct_vm, direct_deploy, direct_owner):
     contract = _setup(direct_vm, direct_deploy, direct_owner)
     _mock_rules(direct_vm)
     _mock_verdict(direct_vm, "NON_COMPLIANT", 400)
@@ -127,7 +135,9 @@ def test_risk_score_is_clamped(direct_vm, direct_deploy, direct_owner):
         POLICY_ID, "ACME GmbH", "Sanctioned Trading LLC", "1 EUR", "Probe", "ref-4"
     )
 
-    assert contract.get_assessment(assessment_id)["risk_score"] == 100
+    record = contract.get_assessment(assessment_id)
+    assert record["risk_band"] == "HIGH"
+    assert record["risk_score"] == 80
 
 
 def test_assessment_ids_increment(direct_vm, direct_deploy, direct_owner):
