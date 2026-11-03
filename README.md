@@ -16,19 +16,25 @@ validators agree on the outcome before state changes.
 
 ## How a verdict is produced
 
-1. **Policy registry** — the owner registers a policy: an id, a rules URL, and
-   analyst guidance. URLs must be `https://`.
+1. **Policy registry** — the owner registers a policy: an id (lowercased, bounded
+   charset), a rules URL, and analyst guidance. URLs must be `https://`. Once a
+   policy has produced an assessment it is locked for edits, so every stored
+   verdict stays reproducible against the rules that produced it.
 2. **Rule fetch** — inside the non-deterministic block the contract renders the
    rules page as text (truncated to `MAX_RULES_CHARS`).
-3. **LLM decision** — the model returns `verdict` (`COMPLIANT` / `NON_COMPLIANT` /
-   `REVIEW`), a `risk_score` (0–100), and `findings`. The response is normalised:
-   aliases like `PASS` or `MANUAL_REVIEW` are mapped, the score is clamped.
+3. **LLM decision** — the model returns `verdict`, a raw `risk_score`, a
+   `rule_quote`, and `findings`. Two normalisations happen before anything is
+   compared: the score is quantised to a 10-point bucket, and the quote must be a
+   verbatim substring of the fetched rules text, so a hallucinated citation fails
+   the assessment instead of being stored.
 4. **Validator** — re-runs the whole fetch-and-judge step independently and
-   compares only the decision fields: `verdict`, `risk_band`, and `risk_score`
-   within `RISK_SCORE_TOLERANCE` (10). `findings` is stored but never compared,
-   since wording varies between models.
-5. **Storage** — only after consensus: the assessment is written, the id counter
-   advances, and the policy's assessment count increments.
+   requires exact equality on `verdict` and on the quantised `risk_bucket`.
+   Because the stored score *is* the bucket, the value written on-chain is
+   precisely the value both nodes agreed on — never two raw scores that merely
+   shared a band.
+5. **Storage** — only after consensus: the assessment is written (with policy
+   version, verified quote, and submit reference), the id counter advances, and
+   the O(1) summary counters increment.
 
 Storage reads never happen inside the non-deterministic block — every value the
 leader needs is copied into memory first.
@@ -38,10 +44,14 @@ leader needs is copied into memory first.
 Failures are classified so that validators agree for the right reasons:
 
 - `[EXPECTED]` / `[EXTERNAL]` — deterministic (bad input, empty rules page). Must
-  match exactly on both nodes.
+  match exactly on tag and code.
 - `[TRANSIENT]` — unreachable source. Both nodes transient means agreement.
-- `[LLM_ERROR]` — malformed model output. Always disagree, forcing a retry with a
-  different leader.
+- `[LLM_ERROR]` — malformed or ungrounded model output. Always disagree, forcing
+  a retry with a different leader.
+
+Errors are compared by tag and first code segment, not by full message text, so
+two nodes reporting the same deterministic failure agree rather than deadlocking
+on differing stack detail.
 
 ## Contract API
 
@@ -50,28 +60,54 @@ Failures are classified so that validators agree for the right reasons:
 | Method | Who | Purpose |
 |---|---|---|
 | `register_policy(policy_id, name, source_url, guidance)` | owner | Add a rules-backed policy |
-| `update_policy(policy_id, name, source_url, guidance)` | owner | Change a policy's source or guidance |
+| `update_policy(policy_id, name, source_url, guidance)` | owner | Change a policy that has no assessments yet |
 | `set_policy_active(policy_id, active)` | owner | Enable/disable a policy |
-| `assess(policy_id, subject, counterparty, amount, context)` | anyone | Run the assessment, returns assessment id (`ca-1`, `ca-2`, …) |
+| `assess(policy_id, subject, counterparty, amount, context, submit_ref)` | anyone | Run the assessment, returns assessment id (`ca-1`, `ca-2`, …) |
 
 **View**
 
 | Method | Returns |
 |---|---|
 | `get_owner()` | owner address |
-| `get_policy(policy_id)` | policy record |
+| `get_policy(policy_id)` | policy record (name, source, guidance, active, count, version) |
 | `get_policies()` | all policies keyed by id |
-| `get_assessment(assessment_id)` | one assessment |
+| `get_assessment(assessment_id)` | one assessment incl. verified `rule_quote` and `submit_ref` |
 | `get_assessments()` | all assessments keyed by id |
 | `get_assessment_ids()` | `{"ids": [...]}` in insertion order |
 | `get_summary()` | totals: total, compliant, non_compliant, review, high_risk, policies |
 
-Risk bands: `LOW` (0–33), `MEDIUM` (34–66), `HIGH` (67–100).
+Risk bands: `LOW` (0–33), `MEDIUM` (34–66), `HIGH` (67–100), computed from the
+quantised score that consensus agreed on.
+
+## Security properties
+
+- **Double submit** — every assessment carries a caller-scoped `submit_ref`, and
+  the pair (requester, ref) is stored. A retry or duplicate submission reverts
+  with `[EXPECTED]:duplicate_submit` instead of minting a second record. Refs are
+  scoped per caller, so one account cannot burn another's.
+- **Caller-supplied text is untrusted** — `subject`, `counterparty`, `amount` and
+  `context` are whitespace-normalised, length-capped, and stripped of angle
+  brackets so they cannot break out of the `<transaction>` block. The prompt
+  frames them as facts that must never be read as instructions.
+- **Grounded reasoning** — `rule_quote` is verified as a substring of the fetched
+  rules text, so the stored justification cannot invent a rule. It is descriptive
+  only; no later computation reads it.
+- **Bounded growth** — at most `MAX_POLICIES` (100) policies and
+  `MAX_ASSESSMENTS` (5000) assessments; ids, URLs, names and guidance are all
+  length-capped.
+- **Bounded reads** — `get_summary()` reads write-time counters rather than
+  walking the whole assessment set.
+- **Reproducibility** — a policy cannot be re-pointed at new rules once it has
+  produced assessments; register a new policy id instead.
+
+Known limits: there is no ownership transfer yet, so a lost owner key freezes
+policy registration (existing assessments keep working), and `findings` is stored
+as descriptive text that is never fed back into a decision.
 
 ## Layout
 
 ```
-contracts/ClauseGuard.py     the Intelligent Contract
+contracts/ClauseGuard.py      the Intelligent Contract
 tests/direct/                 in-memory tests (no Docker, milliseconds each)
 tests/integration/            Studio-mode tests (needs gltest + an environment)
 gltest.config.yaml            network config for Studio-mode integration tests
@@ -111,7 +147,7 @@ multi-validator behaviour needs `gltest` against Studio.
 
 - **Real rule sources** — point a policy at a public sanctions list, a regulator's
   fee schedule, or an internal policy page. The contract only needs text.
-- **Rule snapshots** — store a hash of the fetched rules text alongside the
-  verdict so an auditor can prove which version was applied.
-- **Frontend** — read `get_summary()` and `get_assessments()` through `genlayer-js`
-  to build a review queue for `REVIEW` verdicts.
+- **Rule snapshots** — store a digest of the fetched rules text alongside the
+  verdict so an auditor can prove which exact version was applied.
+- **Review queue** — read `get_summary()` and `get_assessments()` through
+  `genlayer-js` to build a queue of `REVIEW` verdicts for human analysts.

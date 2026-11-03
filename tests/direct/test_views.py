@@ -5,6 +5,7 @@ import json
 POLICY_ID = "eu-payments"
 RULES_URL = "https://rules.example.com/eu/payments"
 GUIDANCE = "Transfers above 10000 EUR to a sanctioned counterparty are prohibited."
+QUOTE = "sanctioned transfers are prohibited"
 
 
 def _mock(direct_vm, verdict, score):
@@ -14,7 +15,14 @@ def _mock(direct_vm, verdict, score):
     )
     direct_vm.mock_llm(
         r".*\[\[COMPLIANCE_ASSESSMENT\]\].*",
-        json.dumps({"verdict": verdict, "risk_score": score, "findings": "see article 4"}),
+        json.dumps(
+            {
+                "verdict": verdict,
+                "risk_score": score,
+                "rule_quote": QUOTE,
+                "findings": "see article 4",
+            }
+        ),
     )
 
 
@@ -45,6 +53,7 @@ def test_policies_are_listed(direct_vm, direct_deploy, direct_owner):
     assert POLICY_ID in policies
     assert "us-ofac" in policies
     assert policies[POLICY_ID]["name"] == "EU payments screen"
+    assert policies[POLICY_ID]["version"] == 1
 
 
 def test_summary_counts_verdicts(direct_vm, direct_deploy, direct_owner):
@@ -53,15 +62,15 @@ def test_summary_counts_verdicts(direct_vm, direct_deploy, direct_owner):
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
 
     _mock(direct_vm, "COMPLIANT", 5)
-    contract.assess(POLICY_ID, "A", "B", "100 EUR", "first")
+    contract.assess(POLICY_ID, "A", "B", "100 EUR", "first", "ref-1")
 
     direct_vm.clear_mocks()
     _mock(direct_vm, "NON_COMPLIANT", 90)
-    contract.assess(POLICY_ID, "A", "C", "200 EUR", "second")
+    contract.assess(POLICY_ID, "A", "C", "200 EUR", "second", "ref-2")
 
     direct_vm.clear_mocks()
     _mock(direct_vm, "REVIEW", 50)
-    contract.assess(POLICY_ID, "A", "D", "300 EUR", "third")
+    contract.assess(POLICY_ID, "A", "D", "300 EUR", "third", "ref-3")
 
     summary = contract.get_summary()
     assert summary["total"] == 3
