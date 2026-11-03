@@ -197,9 +197,8 @@ the pinned test account:
 
 | Role | Address |
 |---|---|
-| Fundable test account (tester1, the signer) | `0xE8b3e800d08727D25156a44cD1609F793bd0Af5a` |
-| Stranger / second signer (tester2) | `0x0C0Fd005478Cef9219451BBD19Dfc6C0586fC1Ad` |
-| Escrow payee (constant in the suite) | `0xabababababababababababababababababababab` |
+| Fundable test account (tester1 — signer and escrow funder) | `0xE8b3e800d08727D25156a44cD1609F793bd0Af5a` |
+| Second test account (tester2 — escrow payee and the stranger) | `0x0C0Fd005478Cef9219451BBD19Dfc6C0586fC1Ad` |
 
 Each run deploys a new contract, so a contract address from an earlier run is
 dead. The two accounts above stay the same because their keystores live in the
@@ -213,8 +212,9 @@ repository (`tests/tester1-keystore.json`, `tests/tester2-keystore.json`).
 3. CI rewrites `gltest.config.yaml` from the keystores, so `default_account` is
    tester1 and `accounts[1]` is tester2 — the same addresses on every run;
 4. `create_escrow` then moves real value out of tester1, and the run finishes
-   with `release_escrow` or `refund_escrow`, so the balance comes back or goes
-   to the payee. `get_balance()` and `get_ledger()` show both sides.
+   with `release_escrow` (pays tester2) or `refund_escrow` (back to tester1).
+   The suite asserts the contract's real balance moved by exactly the deposit
+   and back down by exactly the payout, alongside `get_ledger()`.
 
 **Rotate these keys.** The keystore passwords (`tests/tester1.password`,
 `tests/tester2.password`) are committed, which makes the keys effectively public

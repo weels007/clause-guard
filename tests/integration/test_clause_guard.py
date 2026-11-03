@@ -33,8 +33,6 @@ GUIDANCE = (
     "Transfers to a counterparty on a sanctions list are prohibited. "
     "Any other transfer is permitted."
 )
-# A plain destination address; the payee never has to sign anything.
-PAYEE = "0x" + "ab" * 20
 
 ALLOWED_VERDICTS = ("COMPLIANT", "NON_COMPLIANT", "REVIEW")
 
@@ -267,23 +265,25 @@ def test_12_caller_text_cannot_break_the_prompt(gate, default_account):
 # ---------------------------------------------------------------------------
 
 
-def test_13_zero_deposit_is_rejected(gate, default_account):
+def test_13_zero_deposit_is_rejected(gate, default_account, accounts):
     tx = _transact(
         gate,
         "create_escrow",
-        [_assessment_id(gate), PAYEE, "PO-zero"],
+        [_assessment_id(gate), accounts[1].address, "PO-zero"],
         account=default_account,
         value=0,
     )
     assert tx_execution_failed(tx)
-    assert gate.get_ledger().call()["total_deposited"] == 0
+    assert int(gate.get_ledger().call()["total_deposited"]) == 0
 
 
-def test_14_funding_records_a_refundable_escrow(gate, default_account):
+def test_14_funding_records_a_refundable_escrow(gate, default_account, accounts):
+    balance_before = int(gate.get_balance().call())
+
     tx = _transact(
         gate,
         "create_escrow",
-        [_assessment_id(gate), PAYEE, "PO-1"],
+        [_assessment_id(gate), accounts[1].address, "PO-1"],
         account=default_account,
         value=1000,
     )
@@ -293,13 +293,19 @@ def test_14_funding_records_a_refundable_escrow(gate, default_account):
     # FUNDED when the verdict was COMPLIANT, ORPHAN otherwise. Either way the
     # deposit belongs to the sender and the ledger owes it back.
     assert escrow["status"] in ("FUNDED", "ORPHAN")
-    assert escrow["amount"] == 1000
-    assert escrow["created_ts"] > 0
+    assert int(escrow["amount"]) == 1000
+    assert int(escrow["created_ts"]) > 0
+    assert escrow["payee"] == accounts[1].address.lower().replace("0x", "")
 
     ledger = gate.get_ledger().call()
-    assert ledger["total_deposited"] == 1000
-    assert ledger["locked_total"] == 1000
-    assert ledger["total_out"] == 0
+    assert int(ledger["total_deposited"]) == 1000
+    assert int(ledger["locked_total"]) == 1000
+    assert int(ledger["total_out"]) == 0
+
+    # The real balance moved by exactly the deposit: this is the proof that
+    # value actually left the funder and landed in the contract.
+    balance_after = int(gate.get_balance().call())
+    assert balance_after - balance_before == 1000
 
     assert gate.is_escrow_expired(args=["esc-1"]).call() is False
 
@@ -320,6 +326,7 @@ def test_15_stranger_cannot_move_the_deposit(gate, accounts):
 
 def test_16_funder_unwinds_and_the_money_moves(gate, default_account):
     status = gate.get_escrow(args=["esc-1"]).call()["status"]
+    balance_before = int(gate.get_balance().call())
 
     if status == "FUNDED":
         tx = _transact(gate, "release_escrow", ["esc-1"], account=default_account)
@@ -332,12 +339,15 @@ def test_16_funder_unwinds_and_the_money_moves(gate, default_account):
     assert gate.get_escrow(args=["esc-1"]).call()["status"] == expected
 
     ledger = gate.get_ledger().call()
-    assert ledger["total_out"] == 1000
-    assert ledger["locked_total"] == 0
-    assert (
-        ledger["total_deposited"]
-        == ledger["total_out"] + ledger["locked_total"]
+    assert int(ledger["total_out"]) == 1000
+    assert int(ledger["locked_total"]) == 0
+    assert int(ledger["total_deposited"]) == int(ledger["total_out"]) + int(
+        ledger["locked_total"]
     )
+
+    # The contract paid out: its real balance dropped by the escrowed amount.
+    balance_after = int(gate.get_balance().call())
+    assert balance_before - balance_after == 1000
 
 
 def test_17_unknown_escrow_is_rejected(gate, default_account):
