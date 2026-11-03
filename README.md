@@ -203,7 +203,9 @@ Two facts about it:
   is a fixed representative of the agreed level), never which verdict came out;
 - the escrow unwind branches on the stored status — `FUNDED` releases to the
   payee, `ORPHAN` refunds to the funder — so one real transfer still happens
-  either way.
+  either way;
+- every public method is called at least once against the live contract: each
+  write in its success path (plus the refusals that matter), and every view.
 
 `.github/workflows/integration.yml` runs the suite when the contract changes
 or on demand (`workflow_dispatch`): it deploys one contract to studionet, drives
