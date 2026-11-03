@@ -7,7 +7,7 @@ These never run under plain pytest: they need a GenLayer environment and the
     gltest tests/integration/ -v -s --network localnet   # local Studio (Docker)
 
 `get_contract_factory` resolves the contract from `contracts/` by name, so
-"ComplianceGate" maps to contracts/ComplianceGate.py.
+"ClauseGuard" maps to contracts/ClauseGuard.py.
 """
 
 import pytest
@@ -23,7 +23,7 @@ GUIDANCE = "Transfers above 10000 EUR to a sanctioned counterparty are prohibite
 
 
 def _deploy():
-    return get_contract_factory("ComplianceGate").deploy(args=[])
+    return get_contract_factory("ClauseGuard").deploy(args=[])
 
 
 def test_summary_starts_empty(default_account):

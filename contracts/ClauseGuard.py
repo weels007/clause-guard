@@ -194,7 +194,7 @@ def _assessment_to_dict(assessment_id: str, assessment) -> dict:
     }
 
 
-class ComplianceGate(gl.Contract):
+class ClauseGuard(gl.Contract):
     owner: Address
     policies: TreeMap[str, Policy]
     assessments: TreeMap[str, Assessment]

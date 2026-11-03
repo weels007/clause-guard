@@ -19,7 +19,7 @@ def _mock(direct_vm, verdict, score):
 
 
 def test_empty_contract(direct_deploy):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
 
     assert contract.get_policies() == {}
     assert contract.get_assessments() == {}
@@ -32,7 +32,7 @@ def test_empty_contract(direct_deploy):
 
 
 def test_policies_are_listed(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
@@ -48,7 +48,7 @@ def test_policies_are_listed(direct_vm, direct_deploy, direct_owner):
 
 
 def test_summary_counts_verdicts(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
 
@@ -73,7 +73,7 @@ def test_summary_counts_verdicts(direct_vm, direct_deploy, direct_owner):
 
 
 def test_unknown_assessment_view_reverts(direct_vm, direct_deploy):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
 
     with direct_vm.expect_revert("[EXPECTED]:unknown_assessment"):
         contract.get_assessment("ca-99")

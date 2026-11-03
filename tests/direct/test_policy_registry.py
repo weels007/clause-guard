@@ -6,7 +6,7 @@ GUIDANCE = "Transfers above 10000 EUR to a sanctioned counterparty are prohibite
 
 
 def test_owner_can_register_policy(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     contract.register_policy(
@@ -22,7 +22,7 @@ def test_owner_can_register_policy(direct_vm, direct_deploy, direct_owner):
 
 
 def test_owner_can_update_policy(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
@@ -40,7 +40,7 @@ def test_owner_can_update_policy(direct_vm, direct_deploy, direct_owner):
 
 
 def test_duplicate_policy_reverts(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
@@ -50,7 +50,7 @@ def test_duplicate_policy_reverts(direct_vm, direct_deploy, direct_owner):
 
 
 def test_non_owner_cannot_register(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_alice
 
     with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
@@ -58,7 +58,7 @@ def test_non_owner_cannot_register(direct_vm, direct_deploy, direct_alice):
 
 
 def test_non_owner_cannot_deactivate(direct_vm, direct_deploy, direct_alice):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_alice
 
     with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
@@ -66,7 +66,7 @@ def test_non_owner_cannot_deactivate(direct_vm, direct_deploy, direct_alice):
 
 
 def test_insecure_source_url_reverts(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     with direct_vm.expect_revert("[EXPECTED]:invalid_source_url"):
@@ -76,7 +76,7 @@ def test_insecure_source_url_reverts(direct_vm, direct_deploy, direct_owner):
 
 
 def test_empty_guidance_reverts(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     with direct_vm.expect_revert("[EXPECTED]:empty_guidance"):
@@ -84,7 +84,7 @@ def test_empty_guidance_reverts(direct_vm, direct_deploy, direct_owner):
 
 
 def test_policy_can_be_deactivated(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
@@ -94,14 +94,14 @@ def test_policy_can_be_deactivated(direct_vm, direct_deploy, direct_owner):
 
 
 def test_unknown_policy_view_reverts(direct_vm, direct_deploy):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
 
     with direct_vm.expect_revert("[EXPECTED]:unknown_policy"):
         contract.get_policy("does-not-exist")
 
 
 def test_owner_is_recorded(direct_vm, direct_deploy):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     owner = contract.get_owner()
     assert owner.startswith("0x")
     assert len(owner) == 42

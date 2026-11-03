@@ -27,7 +27,7 @@ def _mock_verdict(direct_vm, verdict, score, findings="Article 4 applies."):
 
 
 def _setup(direct_vm, direct_deploy, direct_owner):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
     return contract
@@ -121,7 +121,7 @@ def test_assessment_ids_increment(direct_vm, direct_deploy, direct_owner):
 def test_assessment_on_unknown_policy_reverts(
     direct_vm, direct_deploy, direct_owner
 ):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
 
     with direct_vm.expect_revert("[EXPECTED]:unknown_policy"):

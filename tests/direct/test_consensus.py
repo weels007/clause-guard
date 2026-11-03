@@ -26,7 +26,7 @@ def _mock_verdict(direct_vm, verdict, score):
 
 
 def _prepare(direct_vm, direct_deploy, direct_owner, verdict, score):
-    contract = direct_deploy("contracts/ComplianceGate.py")
+    contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
     contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
 

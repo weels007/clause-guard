@@ -1,4 +1,4 @@
-# Compliance Sentinel
+# ClauseGuard
 
 Automated compliance and risk assessment on GenLayer.
 
@@ -71,7 +71,7 @@ Risk bands: `LOW` (0–33), `MEDIUM` (34–66), `HIGH` (67–100).
 ## Layout
 
 ```
-contracts/ComplianceGate.py   the Intelligent Contract
+contracts/ClauseGuard.py     the Intelligent Contract
 tests/direct/                 in-memory tests (no Docker, milliseconds each)
 tests/integration/            Studio-mode tests (needs gltest + an environment)
 gltest.config.yaml            network config for Studio-mode integration tests
@@ -85,7 +85,7 @@ requirements.txt              pinned SDK, test suite, linter
 pip install -r requirements.txt
 
 # 1. lint — catches forbidden imports, invalid storage types, nondet misuse
-genvm-lint check contracts/ComplianceGate.py
+genvm-lint check contracts/ClauseGuard.py
 
 # 2. direct-mode tests — in-memory, mocked web + LLM
 pytest tests/direct/ -v
