@@ -8,3 +8,16 @@ __pycache__/
 !.env.example
 node_modules/
 .DS_Store
+
+# Key material — never commit a wallet, keystore or private key.
+# A committed key is a leaked key: it stays in the git history even after the
+# file is deleted. Use repository secrets for CI, or .env for local runs.
+wallet*.json
+wallet*.txt
+wallet.json
+wallet.txt
+private_key*
+*_private_key*
+*.pem
+*.key
+keystore*.json
