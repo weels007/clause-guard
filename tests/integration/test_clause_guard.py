@@ -166,6 +166,7 @@ def test_01_owner_registers_a_policy(client, account, contract):
     assert policy["source_url"] == RULES_URL
     assert policy["active"] is True
     assert int(policy["version"]) == 1
+    assert _read(client, contract, "get_owner").lower() == account.address.lower()
 
 
 def test_02_duplicate_policy_is_refused(client, account, contract):
@@ -348,6 +349,8 @@ def test_14_funding_moves_real_value(client, account, contract, stranger):
     assert int(ledger["locked_total"]) == 1000
     assert int(ledger["total_out"]) == 0
 
+    assert _read(client, contract, "is_escrow_expired", ["esc-1"]) is False
+
     balance_after = int(_read(client, contract, "get_balance"))
     assert balance_after - balance_before == 1000, (
         f"the deposit did not reach the contract: {balance_before} -> {balance_after}"
@@ -409,3 +412,11 @@ def test_18_policy_ids_are_normalised(client, account, contract):
 
     assert _read(client, contract, "get_policy", ["us-ofac"])["name"] == "OFAC screen"
     assert len(_read(client, contract, "get_policies")) == 2
+
+
+def test_19_owner_deactivates_and_reactivates(client, account, contract):
+    _expect_ok(client, account, contract, "set_policy_active", ["us-ofac", False])
+    assert _read(client, contract, "get_policy", ["us-ofac"])["active"] is False
+
+    _expect_ok(client, account, contract, "set_policy_active", ["us-ofac", True])
+    assert _read(client, contract, "get_policy", ["us-ofac"])["active"] is True

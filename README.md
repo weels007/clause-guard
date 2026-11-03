@@ -163,12 +163,13 @@ as descriptive text that is never fed back into a decision.
 
 ## Integration on studionet
 
-`default_account` signs the deploy and the owner-only calls; `accounts[1]` plays
-the stranger in the adversarial cases. The suite deploys the contract **once**
-for the whole module and talks to it through the plain `genlayer_py` client, the
-same shape the other GenLayer projects here use: receipts judged by
-`status_name`, a ten second poll, and a retry around the calls that depend on
-live LLM consensus.
+`tester1` signs the deploy and the owner-only calls; `tester2` plays both the
+escrow payee and the stranger in the adversarial cases. The suite deploys the
+contract **once** for the whole module and talks to it through the plain
+`genlayer_py` client, the same shape the other GenLayer projects here use:
+receipts judged by `status_name` *and* an `execution_result` of `SUCCESS` (an
+agreed rollback is still an ACCEPTED transaction), a ten second poll, and a retry
+around the calls that depend on live LLM consensus.
 
 ```bash
 pytest tests/integration -v -s
@@ -224,9 +225,9 @@ repository (`tests/tester1-keystore.json`, `tests/tester2-keystore.json`).
 `tests/tester2.password`) are committed, which makes the keys effectively public
 to anyone who can read this repository, history included. They are acceptable as
 throwaway studionet accounts holding dust; do not reuse them anywhere else. To
-stop relying on the committed passwords, set `CLAUSEGUARD_TEST1_PASSWORD` and
-`CLAUSEGUARD_TEST2_PASSWORD` as repository secrets — the pin script prefers them
-— and then delete the `.password` files.
+stop relying on the committed passwords, set `CLAUSEGUARD_TESTER1_PASSWORD` and
+`CLAUSEGUARD_TESTER2_PASSWORD` as repository secrets — `scripts/wallet.py`
+prefers them — and then delete the `.password` files.
 
 Studionet's faucet is the droplet in the Studio account selector and funds the
 Studio account, not an arbitrary address. If tester1 is not a Studio account you
@@ -235,9 +236,9 @@ control, send GEN from a wallet, or use Bradbury
 
 ## Seeing transactions in the explorer
 
-Direct mode never touches a chain, so nothing it runs can appear anywhere. Studio
-mode against studionet is different: `factory.deploy()` and every `.transact()`
-are real transactions on that network.
+Direct mode never touches a chain, so nothing it runs can appear anywhere. The
+same suite against studionet is different: `client.deploy_contract()` and every
+`write_contract()` are real transactions on that network.
 
 The suite prints the deployed address once and the id of every transaction, so
 run it with `-s` and the output looks like:
@@ -270,8 +271,8 @@ its Execute Transactions panel, or use the CLI (`genlayer deploy`,
 ```
 contracts/ClauseGuard.py      the Intelligent Contract
 tests/direct/                 in-memory tests (no Docker, milliseconds each)
-tests/integration/            Studio-mode tests (needs gltest + an environment)
-gltest.config.yaml            network config for Studio-mode integration tests
+tests/integration/            real-network tests (genlayer_py client)
+gltest.config.yaml            network config, used by direct-mode runs
 .github/workflows/ci.yml      lint + direct-mode tests
 .github/workflows/integration.yml  Studio-mode suite, manual dispatch
 requirements.txt              pinned SDK, test suite, linter
