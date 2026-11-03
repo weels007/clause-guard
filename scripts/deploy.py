@@ -1,9 +1,12 @@
-"""Deploy ClauseGuard once and record the address in the frontend.
+"""Deploy ClauseGuard once, record the address, and seed a starter policy.
 
 The console talks to exactly one contract: `frontend/src/config.js` carries its
 address and every visitor reads and writes that one. This script is the only
 thing that deploys, it is run by the "Deploy Contract" workflow, and it rewrites
 the config so the address ships with the site.
+
+On every run it also makes sure a starter policy exists, so a visitor opening the
+site finds a policy to assess against instead of an empty registry.
 
     python scripts/deploy.py            # deploy only if no address is recorded
     python scripts/deploy.py --force    # redeploy and replace the address
@@ -28,6 +31,16 @@ POLL_INTERVAL = 10_000
 POLL_RETRIES = 60
 ADDRESS_RE = re.compile(r'CONTRACT_ADDRESS\s*=\s*"([^"]*)"')
 ADDRESS_VALUE = re.compile(r"0x[0-9a-fA-F]{40}")
+
+# Public, stable, text-only: validators must be able to fetch it. Same source the
+# integration suite uses.
+POLICY_ID = "rfc-2119"
+POLICY_NAME = "Requirement keywords (RFC 2119)"
+RULES_URL = "https://www.rfc-editor.org/rfc/rfc2119.txt"
+GUIDANCE = (
+    "A transfer is COMPLIANT when the transaction does not violate a MUST or "
+    "MUST NOT requirement in the rules. Use REVIEW when the text does not decide it."
+)
 
 
 def recorded_address() -> str:
@@ -71,36 +84,67 @@ def execution_succeeded(receipt) -> bool:
     return str(receipt.get("tx_execution_result_name", "")) == "FINISHED_WITH_RETURN"
 
 
+def wait(client, tx_hash):
+    return client.wait_for_transaction_receipt(
+        tx_hash, retries=POLL_RETRIES, interval=POLL_INTERVAL
+    )
+
+
+def ensure_policy(client, account, address: str) -> None:
+    """Register the starter policy once; a second run finds it and does nothing."""
+    policies = client.read_contract(address, "get_policies") or {}
+    if POLICY_ID in policies:
+        print(f"[seed] policy '{POLICY_ID}' already registered")
+        return
+
+    print(f"[seed] registering the starter policy '{POLICY_ID}'")
+    tx_hash = client.write_contract(
+        address,
+        "register_policy",
+        args=[POLICY_ID, POLICY_NAME, RULES_URL, GUIDANCE],
+        account=account,
+    )
+    receipt = wait(client, tx_hash)
+
+    # The write is non-idempotent, so judge it by the state it was meant to change.
+    policies = client.read_contract(address, "get_policies") or {}
+    if POLICY_ID not in policies:
+        raise SystemExit(f"[seed] the policy was not registered: {receipt}")
+    if not execution_succeeded(receipt):
+        print(f"[seed] warning: receipt was inconclusive, but '{POLICY_ID}' is on chain")
+    print(f"[seed] '{POLICY_ID}' is registered")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--force", action="store_true", help="redeploy even when an address is recorded")
     args = parser.parse_args()
 
-    existing = recorded_address()
-    if existing and not args.force:
-        print(f"[deploy] config already points at {existing}; nothing to deploy")
-        return 0
-
     account = load_account("tester1")
     client = create_client(studionet, account=account)
-    code = CONTRACT_PATH.read_text(encoding="utf-8")
 
-    print(f"[deploy] deploying from {account.address}")
-    tx_hash = client.deploy_contract(code=code, account=account)
-    print(f"[deploy] transaction {tx_hash}")
+    existing = recorded_address()
+    if existing and not args.force:
+        print(f"[deploy] config already points at {existing}; reusing it")
+        address = existing
+    else:
+        code = CONTRACT_PATH.read_text(encoding="utf-8")
+        print(f"[deploy] deploying from {account.address}")
+        tx_hash = client.deploy_contract(code=code, account=account)
+        print(f"[deploy] transaction {tx_hash}")
 
-    receipt = client.wait_for_transaction_receipt(
-        tx_hash, retries=POLL_RETRIES, interval=POLL_INTERVAL
-    )
-    if not execution_succeeded(receipt):
-        raise SystemExit(f"[deploy] the deployment did not succeed: {receipt}")
+        receipt = wait(client, tx_hash)
+        if not execution_succeeded(receipt):
+            raise SystemExit(f"[deploy] the deployment did not succeed: {receipt}")
 
-    address = find_address(receipt)
-    if not address:
-        raise SystemExit(f"[deploy] no contract address in the receipt: {receipt}")
+        address = find_address(receipt)
+        if not address:
+            raise SystemExit(f"[deploy] no contract address in the receipt: {receipt}")
 
-    write_address(address)
-    print(f"[deploy] ClauseGuard is at {address}")
+        write_address(address)
+        print(f"[deploy] ClauseGuard is at {address}")
+
+    ensure_policy(client, account, address)
     return 0
 
 

@@ -323,9 +323,10 @@ with the extension; a plain mobile browser has none, and the chooser says so.
 
 **It runs on-chain against one shared contract.** `frontend/src/config.js` holds
 that contract's address; `scripts/deploy.py` (run by the **Deploy Contract**
-workflow) deploys it once and writes the address into the config, and every
-visitor then reads and writes that same contract. There is deliberately no deploy
-button: using the console can never create another contract.
+workflow) deploys it once, writes the address into the config and seeds a starter
+policy, and every visitor then reads and writes that same contract. There is
+deliberately no deploy button: using the console can never create another
+contract.
 
 `frontend/src/chain.js` talks to GenLayer Studio through **genlayer-js**: reads go
 through a wallet-less client (`readContract`), writes are signed by the connected
@@ -384,6 +385,10 @@ pytest tests/integration -v -s
 # 4. the console
 cd frontend && npm install && npm run dev     # http://localhost:5173
 cd frontend && npm run build                  # static files in frontend/dist
+
+# 5. deploy the shared contract once (writes its address into the config);
+#    in CI this is the "Deploy Contract" workflow, never the app itself
+python scripts/deploy.py
 ```
 
 ## Developing without a terminal
