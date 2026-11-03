@@ -214,6 +214,9 @@ export default function App() {
 
   const wallet = state.wallet || {};
   const connected = Boolean(wallet.address);
+  /* On chain the wallet is the identity; the demo owner/stranger toggle would
+     be a dead control, so it only exists in simulation. */
+  const showDemoActor = !connected && state.mode !== "chain";
   const walletLabel = connected ? `${wallet.name || "Wallet"} · ${shortAddress(wallet.address)}` : "Connect wallet";
 
   return (
@@ -256,7 +259,7 @@ export default function App() {
               <span className="wallet-label">{walletLabel}</span>
             </button>
 
-            {!connected && (
+            {showDemoActor && (
               <button
                 className="actor-switch"
                 type="button"
@@ -290,7 +293,7 @@ export default function App() {
                 {item.label}
               </a>
             ))}
-            {!connected && (
+            {showDemoActor && (
               <button
                 className="mobile-actor"
                 type="button"
