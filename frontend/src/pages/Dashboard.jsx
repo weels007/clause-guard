@@ -95,13 +95,19 @@ export default function Dashboard({ contract, state }) {
     ["high risk", list.filter((item) => item.risk_band === "HIGH").length],
   ];
 
+  /* A pending handover is between the owner and the nominee; don't advertise it. */
+  const actor = contract.actorAddress();
+  const canSeePending =
+    state.pendingOwner !== ZERO &&
+    (contract.isOwner() || (actor && actor.toLowerCase() === state.pendingOwner.toLowerCase()));
+
   const ledger = [
     ["total deposited", formatWei(state.ledger.total_deposited)],
     ["total out", formatWei(state.ledger.total_out)],
     ["locked total", formatWei(state.ledger.locked_total)],
     ["contract balance", formatWei(state.balance)],
     ["owner", shortAddress(state.owner)],
-    ["pending owner", state.pendingOwner === ZERO ? "—" : shortAddress(state.pendingOwner)],
+    ["pending owner", canSeePending ? shortAddress(state.pendingOwner) : "—"],
   ];
 
   const reset = () => {

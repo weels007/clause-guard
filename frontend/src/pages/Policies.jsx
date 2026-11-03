@@ -20,6 +20,11 @@ export default function Policies({ contract, state }) {
   const fee = Number(state.policyFee?.fee_wei || 0);
   /* On chain, anyone may add a policy, but a non-owner posts the anti-spam fee. */
   const mustPay = state.mode === "chain" && connected && !isOwner;
+  const isNominee =
+    pending && connected && contract.actorAddress().toLowerCase() === state.pendingOwner.toLowerCase();
+  /* Handover is the owner's business; the nominee needs the accept button, and
+     nobody else should be able to poke at it. */
+  const canSeeOwnership = isOwner || isNominee;
 
   const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
 
@@ -234,39 +239,54 @@ export default function Policies({ contract, state }) {
         </section>
       </div>
 
-      <section className="panel" style={{ marginTop: 16 }}>
-        <div className="panel-head">
-          <h2>Contract ownership</h2>
-          <span className={`pill ${pending ? "warn" : "ok"}`}>{pending ? "handover pending" : "settled"}</span>
-        </div>
-        <dl className="kv">
-          <div>
-            <dt>owner</dt>
-            <dd>{shortAddress(state.owner)}</dd>
+      {canSeeOwnership && (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-head">
+            <h2>Contract ownership</h2>
+            <span className={`pill ${pending ? "warn" : "ok"}`}>{pending ? "handover pending" : "settled"}</span>
           </div>
-          <div>
-            <dt>nominated</dt>
-            <dd>{pending ? shortAddress(state.pendingOwner) : "—"}</dd>
-          </div>
-        </dl>
-        <div className="field-row" style={{ marginTop: 14 }}>
-          <label className="field">
-            <span className="field-label">Nominate a successor</span>
-            <input value={nominee} onChange={(event) => setNominee(event.target.value)} placeholder="0x…" />
-          </label>
-          <div style={{ display: "flex", alignItems: "end" }}>
-            <button className="btn btn-ghost" type="button" onClick={nominate}>
-              Nominate
-            </button>
-          </div>
-        </div>
-        <div className="form-actions">
-          <button className="btn btn-primary btn-sm" type="button" onClick={accept}>
-            Accept as nominee
-          </button>
-        </div>
-        <p className="hint">Two-step on purpose: a mistyped address cannot take ownership by itself.</p>
-      </section>
+          <dl className="kv">
+            <div>
+              <dt>owner</dt>
+              <dd>{shortAddress(state.owner)}</dd>
+            </div>
+            <div>
+              <dt>nominated</dt>
+              <dd>{pending ? shortAddress(state.pendingOwner) : "—"}</dd>
+            </div>
+          </dl>
+
+          {isOwner && (
+            <div className="field-row" style={{ marginTop: 14 }}>
+              <label className="field">
+                <span className="field-label">Nominate a successor</span>
+                <input value={nominee} onChange={(event) => setNominee(event.target.value)} placeholder="0x…" />
+              </label>
+              <div style={{ display: "flex", alignItems: "end" }}>
+                <button className="btn btn-ghost" type="button" onClick={nominate}>
+                  Nominate
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isNominee && (
+            <>
+              <p className="hint">
+                You are the nominated successor. Accept to take over the contract; until then the current owner stays in
+                charge.
+              </p>
+              <div className="form-actions">
+                <button className="btn btn-primary btn-sm" type="button" onClick={accept}>
+                  Accept ownership
+                </button>
+              </div>
+            </>
+          )}
+
+          <p className="hint">Two-step on purpose: a mistyped address cannot take ownership by itself.</p>
+        </section>
+      )}
     </div>
   );
 }
