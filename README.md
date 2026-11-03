@@ -158,6 +158,38 @@ Known limits: there is no ownership transfer yet, so a lost owner key freezes
 policy registration (existing assessments keep working), and `findings` is stored
 as descriptive text that is never fed back into a decision.
 
+## Integration on studionet
+
+`gltest` generates the accounts it uses — there is no wallet to connect and no
+private key to paste. `default_account` signs the deploy and the owner-only
+calls; `accounts[1]`, `accounts[2]` are further signers the framework creates
+for the adversarial cases. They are generated per run, so no real funds are
+involved. Only `testnet_bradbury` needs keys of your own, and those live in
+`gltest.config.yaml` under `accounts:` and are read from `.env`.
+
+```bash
+gltest tests/integration/ -v -s --network studionet
+```
+
+The suite exercises every method in order: policy registry and its
+authorisation guards, a real assessment (live fetch + live LLM + real
+consensus), submit-ref replay, policy locking, prompt-tag neutralisation,
+escrow deposit, a stranger trying to release and refund, a real payout, and
+policy-id normalisation.
+
+Two facts about it:
+
+- the assessment verdict is whatever consensus produced, so the tests assert
+  that consensus happened and that the stored record is well formed (score is a
+  10-point bucket, citation is grounded), never which verdict came out;
+- the escrow unwind branches on the stored status — `FUNDED` releases to the
+  payee, `ORPHAN` refunds to the funder — so one real transfer still happens
+  either way.
+
+`.github/workflows/integration.yml` runs the same suite on demand
+(`workflow_dispatch`) rather than on every push: it deploys to studionet, pays
+for real execution, and depends on live web and LLM behaviour.
+
 ## Layout
 
 ```
