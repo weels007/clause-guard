@@ -281,9 +281,9 @@ its Execute Transactions panel, or use the CLI (`genlayer deploy`,
 
 ## Frontend
 
-`index.html` is a static, dependency-free console for the contract: no build step,
-no framework, no npm install. Open it from the repository root (or the published
-preview link) and it runs.
+`frontend/` is a **React 18 + Vite** console for the contract. No UI kit: one
+hand-written design system in `frontend/src/styles.css`, a hash router in
+`App.jsx`, and a page per view. It is the only frontend in the repository.
 
 - **Landing** — what the contract does, the four steps, and the properties that
   keep the failure modes boring.
@@ -298,12 +298,17 @@ preview link) and it runs.
 - **How it works** — the consensus payload, the citation invariant, the error
   taxonomy and the money rules.
 
-**Wallet connection** is real and wallet-agnostic. `assets/js/wallet.js` discovers
-injected EVM wallets with **EIP-6963**, so MetaMask and Rabby each announce their
-own provider and appear as separate rows in the chooser modal — neither one
-overwrites `window.ethereum`, and the one you pick is the one that signs. After
-the choice the page asks for an account, then adds or switches to **GenLayer
-Studio Network** (`chainId 61999` / `0xf22f`, RPC
+The look is deliberately not a stock dark dashboard: an ink-violet ground under
+warm ivory serif headings, acid-lime / coral / iris accents, brass hairlines and
+corner ticks, and a background built from slowly rotating contour lines, a soft
+scan sweep and film grain — all CSS and inline SVG, no images to download.
+
+**Wallet connection** is real and wallet-agnostic. `frontend/src/wallet.js`
+discovers injected EVM wallets with **EIP-6963**, so MetaMask and Rabby each
+announce their own provider and appear as separate rows in the chooser modal —
+neither one overwrites `window.ethereum`, and the one you pick is the one that
+signs. After the choice the page asks for an account, then adds or switches to
+**GenLayer Studio Network** (`chainId 61999` / `0xf22f`, RPC
 `https://studio.genlayer.com/api`) and follows `accountsChanged` and
 `chainChanged` afterwards.
 
@@ -311,12 +316,12 @@ The connected address becomes the acting account for every guard in the console:
 the owner/stranger toggle is hidden while a wallet is connected, a connected
 wallet that is not the contract owner gets an explicit note on the Policies page
 instead of a silent refusal, and escrows and submit references are scoped to the
-real account. Connection is plain EIP-1193, so the page still needs no
-dependency. Wallets are only visible when the page runs in a browser that has an
+real account. Connection is plain EIP-1193, so the console needs no wallet
+library. Wallets are only visible when the page runs in a browser that has an
 injected provider — MetaMask's or Rabby's in-app browser, or a desktop browser
 with the extension; a plain mobile browser has none, and the chooser says so.
 
-**Contract calls are still simulated.** `assets/js/store.js` is a faithful
+**Contract calls are still simulated.** `frontend/src/contract.js` is a faithful
 stand-in for `contracts/ClauseGuard.py` — same guards, same error codes, same
 `ORPHAN`-instead-of-revert deposit rule, same ledger invariant, same
 caller-scoped `submit_ref` replay refusal. State lives in `localStorage`, and
@@ -331,11 +336,15 @@ the simulator only as the offline fallback.
 contracts/ClauseGuard.py      the Intelligent Contract
 tests/direct/                 in-memory tests (no Docker, milliseconds each)
 tests/integration/            real-network tests (genlayer_py client)
-index.html                    the static console (no build step)
-assets/css/style.css          design system
-assets/js/                    router, views, wallet discovery, contract stand-in
+frontend/                     React + Vite console
+frontend/src/App.jsx          header, wallet chooser, hash router
+frontend/src/pages/           landing, dashboard, policies, assess, escrows, how
+frontend/src/contract.js      simulated contract mirroring ClauseGuard.py
+frontend/src/wallet.js        EIP-6963 discovery and connection
+frontend/src/styles.css       design system
+Dockerfile                    builds frontend/ and serves dist with nginx
 gltest.config.yaml            network config, used by direct-mode runs
-.github/workflows/ci.yml      lint + direct-mode tests
+.github/workflows/ci.yml      lint, direct-mode tests, frontend build
 .github/workflows/integration.yml  real-network suite, on push or by hand
 requirements.txt              pinned SDK, test suite, linter
 ```
@@ -353,6 +362,10 @@ pytest tests/direct/ -v
 
 # 3. integration tests — one deploy, real network, live LLM consensus
 pytest tests/integration -v -s
+
+# 4. the console
+cd frontend && npm install && npm run dev     # http://localhost:5173
+cd frontend && npm run build                  # static files in frontend/dist
 ```
 
 ## Developing without a terminal
