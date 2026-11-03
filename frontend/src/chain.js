@@ -44,13 +44,52 @@ function walletClient(address, provider) {
   return createClient({ chain: studionet, account: address, provider });
 }
 
+const STUDIO_CHAIN_ID = `0x${studionet.id.toString(16)}`;
+
+/** Put the chosen wallet on Studio, without genlayer-js' Snap handshake.
+ *
+ * `client.connect()` is MetaMask-only: it probes `wallet_getSnaps` and then asks
+ * to install the GenLayer Snap, which Rabby and other EIP-1193 wallets do not
+ * implement ("method[wallet_getSnaps] doesn't has corresponding handler").
+ * Switching the chain ourselves is enough for every injected wallet.
+ */
+async function ensureStudioChain(provider) {
+  const current = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+  if (current === STUDIO_CHAIN_ID) return;
+
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: STUDIO_CHAIN_ID }],
+    });
+  } catch (error) {
+    if (Number(error?.code) !== 4902) throw error;
+    await provider.request({
+      method: "wallet_addEthereumChain",
+      params: [
+        {
+          chainId: STUDIO_CHAIN_ID,
+          chainName: studionet.name,
+          rpcUrls: studionet.rpcUrls.default.http,
+          nativeCurrency: studionet.nativeCurrency,
+          blockExplorerUrls: studionet.blockExplorers ? [studionet.blockExplorers.default.url] : [],
+        },
+      ],
+    });
+  }
+
+  const after = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+  if (after !== STUDIO_CHAIN_ID) {
+    throw new Error(`Switch your wallet to ${studionet.name} (${studionet.id}) before writing.`);
+  }
+}
+
 const WAIT = { waitUntil: "decided", interval: 3000, retries: 140 };
 
 /** Send a write, wait for the committee, and return the receipt. */
 export async function sendWrite({ address, account, provider, functionName, args = [], value = 0, onHash }) {
   const client = walletClient(account, provider);
-  /* No-op when the wallet is already on Studio; a switch prompt otherwise. */
-  await client.connect("studionet");
+  await ensureStudioChain(provider);
   const hash = await client.writeContract({
     address,
     functionName,
