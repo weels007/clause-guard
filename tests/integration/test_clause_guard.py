@@ -115,13 +115,42 @@ def _attempt(client, account, contract, method, args=None, value=0):
         return error
 
 
-def _expect_ok(client, account, contract, method, args=None, value=0, attempts=3):
-    """Retry a write while live consensus is the thing that failed."""
+def _definite_rollback(receipt) -> bool:
+    """True when the committee agreed the call rolled back — a final answer."""
+    if not isinstance(receipt, dict):
+        return False
+    leader = (receipt.get("consensus_data") or {}).get("leader_receipt")
+    if isinstance(leader, list):
+        leader = leader[0] if leader else None
+    if not isinstance(leader, dict):
+        return False
+    result = leader.get("result")
+    return (
+        leader.get("execution_result") == "ERROR"
+        and isinstance(result, dict)
+        and result.get("status") == "rollback"
+    )
+
+
+def _expect_ok(
+    client, account, contract, method, args=None, value=0, attempts=3, verify=None
+):
+    """Send a write and require it to succeed.
+
+    A non-idempotent write (register_policy, assess, create_escrow) must not be
+    blindly resubmitted: if the first transaction landed but its receipt came
+    back inconclusive, a retry is rejected as a duplicate and looks like a
+    failure. `verify` re-reads the state instead of guessing.
+    """
     last = None
     for attempt in range(attempts):
         result = _attempt(client, account, contract, method, args, value)
         if _execution_succeeded(result):
             return result
+        if verify is not None and verify():
+            return result
+        if _definite_rollback(result):
+            raise AssertionError(f"{method} was refused: {_rollback_reason(result)}")
         last = result
         if attempt < attempts - 1:
             print(f"  {method} did not reach consensus, retrying")
@@ -163,6 +192,22 @@ def _assessment_id(client, contract, index=0):
     return _read(client, contract, "get_assessment_ids")["ids"][index]
 
 
+def _assessment_count(client, contract):
+    return len(_read(client, contract, "get_assessment_ids")["ids"])
+
+
+def _has_policy(client, contract, policy_id):
+    return policy_id in _read(client, contract, "get_policies")
+
+
+def _escrow_exists(client, contract, escrow_id):
+    try:
+        _read(client, contract, "get_escrow", [escrow_id])
+    except Exception:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # policy registry — deterministic, no web, no LLM
 # ---------------------------------------------------------------------------
@@ -175,6 +220,7 @@ def test_01_owner_registers_a_policy(client, account, contract):
         contract,
         "register_policy",
         [POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE],
+        verify=lambda: _has_policy(client, contract, POLICY_ID),
     )
 
     policy = _read(client, contract, "get_policy", [POLICY_ID])
@@ -258,6 +304,7 @@ def test_08_assessment_reaches_consensus(client, account, contract):
             "Monthly SaaS invoice",
             "ref-1",
         ],
+        verify=lambda: _assessment_count(client, contract) >= 1,
     )
 
     ids = _read(client, contract, "get_assessment_ids")["ids"]
@@ -318,6 +365,7 @@ def test_12_caller_text_cannot_break_the_prompt(client, account, contract):
             "probe",
             "ref-3",
         ],
+        verify=lambda: _assessment_count(client, contract) >= 2,
     )
 
     record = _read(client, contract, "get_assessment", [_assessment_id(client, contract, 1)])
@@ -352,6 +400,7 @@ def test_14_funding_moves_real_value(client, account, contract, stranger):
         "create_escrow",
         [_assessment_id(client, contract), stranger.address, "PO-1"],
         value=1000,
+        verify=lambda: _escrow_exists(client, contract, "esc-1"),
     )
 
     escrow = _read(client, contract, "get_escrow", ["esc-1"])
@@ -387,11 +436,19 @@ def test_16_funder_unwinds_and_the_money_moves(client, account, contract):
     balance_before = int(_read(client, contract, "get_balance"))
 
     if status == "FUNDED":
-        _expect_ok(client, account, contract, "release_escrow", ["esc-1"])
-        expected = "RELEASED"
+        method, expected = "release_escrow", "RELEASED"
     else:
-        _expect_ok(client, account, contract, "refund_escrow", ["esc-1"])
-        expected = "REFUNDED"
+        method, expected = "refund_escrow", "REFUNDED"
+
+    _expect_ok(
+        client,
+        account,
+        contract,
+        method,
+        ["esc-1"],
+        verify=lambda: _read(client, contract, "get_escrow", ["esc-1"])["status"]
+        == expected,
+    )
 
     assert _read(client, contract, "get_escrow", ["esc-1"])["status"] == expected
 
@@ -424,6 +481,7 @@ def test_18_policy_ids_are_normalised(client, account, contract):
         contract,
         "register_policy",
         ["US-OFAC", "OFAC screen", "https://www.treasury.gov/ofac", "OFAC list."],
+        verify=lambda: _has_policy(client, contract, "us-ofac"),
     )
 
     assert _read(client, contract, "get_policy", ["us-ofac"])["name"] == "OFAC screen"
