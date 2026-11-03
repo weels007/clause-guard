@@ -187,6 +187,12 @@ function closeWalletModal() {
   if (!modal) return;
   if (typeof modal.close === "function" && modal.open) modal.close();
   else modal.removeAttribute("open");
+
+  /* Focusing the close button inside a modal can scroll the page sideways when
+     anything overflows; come back to the left edge once it is gone. */
+  window.requestAnimationFrame(() => {
+    if (window.scrollX) window.scrollTo(0, window.scrollY);
+  });
 }
 
 function renderWalletList() {

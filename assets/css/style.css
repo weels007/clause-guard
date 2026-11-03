@@ -110,8 +110,10 @@ code { background: rgba(139, 124, 246, 0.12); padding: 0.1em 0.4em; border-radiu
 .nav-shell {
   min-height: var(--nav-h);
   display: flex; align-items: center; gap: 24px;
+  min-width: 0;
 }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -0.01em; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -0.01em; min-width: 0; }
+.brand-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-mark {
   display: grid; place-items: center; width: 34px; height: 34px;
   border-radius: 10px; color: var(--mint);
@@ -131,7 +133,7 @@ code { background: rgba(139, 124, 246, 0.12); padding: 0.1em 0.4em; border-radiu
 }
 .nav-links a:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
 .nav-links a[aria-current="page"] { color: var(--text); background: rgba(255, 255, 255, 0.07); }
-.nav-actions { display: flex; align-items: center; gap: 10px; margin-left: 12px; }
+.nav-actions { display: flex; align-items: center; gap: 10px; margin-left: 12px; flex-shrink: 0; }
 
 .actor-switch {
   display: inline-flex; align-items: center; gap: 8px;
@@ -634,6 +636,11 @@ textarea { resize: vertical; }
 .wallet-foot { display: flex; justify-content: flex-end; }
 
 @media (max-width: 760px) {
-  .wallet-btn { max-width: 132px; }
-  .nav-actions { gap: 8px; }
+  .brand-name { font-size: 15px; }
+  .nav-actions { gap: 6px; margin-left: 6px; }
+  /* The dot keeps the owner/stranger colour; the word does not fit beside the
+     wallet button on a phone. */
+  #actor-label { display: none; }
+  .actor-switch { padding: 7px 10px; }
+  .wallet-btn { max-width: 118px; padding: 6px 10px; font-size: 12px; }
 }
