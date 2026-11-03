@@ -406,6 +406,7 @@ class ClauseGuard(gl.Contract):
     def __init__(self):
         self.owner = gl.message.sender_address
 
+    @gl.public.write
     def __receive__(self) -> None:
         # Funds may only enter through create_escrow, which records a ledger
         # entry. A bare transfer would otherwise sit here with no owner able
