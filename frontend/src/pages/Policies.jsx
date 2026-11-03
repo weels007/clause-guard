@@ -106,6 +106,13 @@ export default function Policies({ contract, state }) {
         </div>
       </header>
 
+      {state.mode === "chain" && !connected && fee > 0 && (
+        <p className="hint">
+          Anyone can register a policy here. A non-owner pays a one-off {formatWei(fee)} wei fee, held by the contract and
+          withdrawable by its owner.
+        </p>
+      )}
+
       {connected && !isOwner && (
         <p className="wallet-note">
           Your wallet ({shortAddress(contract.actorAddress())}) is not the contract owner. You can still register your own policy by
