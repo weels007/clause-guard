@@ -318,7 +318,16 @@ def test_08_assessment_reaches_consensus(client, account, contract):
     # The stored number is derived from the agreed level, never from the model.
     assert int(record["risk_score"]) in (20, 50, 80)
     assert record["submit_ref"] == "ref-1"
-    assert len(record["rule_quote"]) >= 20
+
+    # Either the citation was grounded in the fetched page, or the contract
+    # refused to certify it and recorded REVIEW with an empty quote. Both are
+    # valid outcomes; a quote that exists must be a real one.
+    if record["rule_quote"]:
+        assert len(record["rule_quote"]) >= 20
+    else:
+        assert record["verdict"] == "REVIEW", (
+            "an ungrounded citation must downgrade the verdict to REVIEW"
+        )
 
 
 def test_09_duplicate_submit_ref_is_refused(client, account, contract):
