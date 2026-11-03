@@ -1,55 +1,15 @@
-import { useState } from "react";
 import { explorerAddress } from "../chain.js";
-import { humanizeError } from "../contract.js";
 import { formatWei, shortAddress } from "../format.js";
 import { Chip, toast } from "../ui.jsx";
 
 const ZERO = "0x" + "0".repeat(40);
 
 function NetworkPanel({ contract, state }) {
-  const [draft, setDraft] = useState(state.address || "");
-  const [deploying, setDeploying] = useState(false);
   const onChain = state.mode === "chain";
-  const connected = Boolean(state.wallet?.address);
-
-  const deploy = async () => {
-    if (deploying) return;
-    const ok = window.confirm(
-      "Deploy a NEW ClauseGuard contract?\n\n" +
-        "This sends a deploy transaction that creates a fresh contract at a new address, with empty policies, assessments and escrows. " +
-        "Your wallet pays the fees and will ask you to sign.\n\n" +
-        "If a ClauseGuard contract already exists, cancel and paste its address instead."
-    );
-    if (!ok) return;
-    setDeploying(true);
-    try {
-      const address = await contract.deploy();
-      toast("ok", "Contract deployed", `${shortAddress(address)} · saved as the address this console reads from.`);
-    } catch (error) {
-      toast("error", "Deploy failed", humanizeError(error));
-    } finally {
-      setDeploying(false);
-    }
-  };
-
-  const useAddress = () => {
-    try {
-      contract.setAddress(draft);
-      toast("ok", "Contract set", `${shortAddress(draft)} · reading from the chain.`);
-    } catch (error) {
-      toast("error", "Address rejected", humanizeError(error));
-    }
-  };
 
   const refresh = async () => {
     await contract.refresh();
     toast("ok", "Refreshed", "Reads come straight from the contract.");
-  };
-
-  const forget = () => {
-    contract.clearAddress();
-    setDraft("");
-    toast("ok", "Back to simulation", "The console is showing the local mock again.");
   };
 
   return (
@@ -64,7 +24,7 @@ function NetworkPanel({ contract, state }) {
           <dl className="kv">
             <div>
               <dt>address</dt>
-              <dd>{shortAddress(state.address, 10, 8)}</dd>
+              <dd style={{ wordBreak: "break-all" }}>{state.address}</dd>
             </div>
             <div>
               <dt>network</dt>
@@ -92,36 +52,18 @@ function NetworkPanel({ contract, state }) {
             >
               Explorer
             </a>
-            <button className="btn btn-ghost btn-sm" type="button" onClick={forget}>
-              Forget
-            </button>
           </div>
+          <p className="hint">
+            This is the one shared ClauseGuard contract: everybody reads and writes the same address. There is nothing to deploy
+            here — connect a wallet and use Policies or Assess.
+          </p>
         </>
       ) : (
-        <>
-          <p className="hint" style={{ marginTop: 0 }}>
-            This view is the simulated contract. <b>Deploying creates a brand-new contract</b> — a new address with no policies,
-            assessments or escrows — so it is done once per contract. If a ClauseGuard contract already exists, paste its address
-            below instead; every read and write then goes to that same contract for everyone.
-          </p>
-          <div className="field-row" style={{ marginTop: 12 }}>
-            <label className="field">
-              <span className="field-label">Contract address</span>
-              <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="0x…" />
-            </label>
-            <div style={{ display: "flex", alignItems: "end", gap: 8, flexWrap: "wrap" }}>
-              <button className="btn btn-ghost" type="button" onClick={useAddress}>
-                Use address
-              </button>
-              <button className="btn btn-primary" type="button" onClick={deploy} disabled={!connected || deploying}>
-                {deploying ? <span className="spin" /> : null}
-                {deploying ? "Deploying…" : "Deploy new contract"}
-              </button>
-            </div>
-          </div>
-          {!connected && <p className="hint">Connect an EVM wallet first (top right) to deploy.</p>}
-          {deploying && <p className="hint">Deploying takes a minute: the committee has to agree on the contract.</p>}
-        </>
+        <p className="hint" style={{ marginTop: 0 }}>
+          No deployment address is recorded yet, so these screens run against the local simulation. The address is written once
+          into <code>frontend/src/config.js</code> by the <b>Deploy Contract</b> workflow; every visitor then uses that same
+          contract and nobody deploys their own.
+        </p>
       )}
 
       {state.chainError && (

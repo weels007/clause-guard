@@ -1,14 +1,12 @@
 /** GenLayer on-chain transport.
  *
  * Everything the console needs from genlayer-js lives here: reads through a
- * wallet-less client, writes and deploys signed by the connected EVM wallet,
- * receipt waiting, and the consensus data the receipt carries.
+ * wallet-less client, writes signed by the connected EVM wallet, receipt
+ * waiting, and the consensus data the receipt carries.
  */
 import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
-import contractSource from "../../contracts/ClauseGuard.py?raw";
 
-export const CONTRACT_SOURCE = contractSource;
 export const CHAIN = studionet;
 export const EXPLORER = "https://explorer-studio.genlayer.com";
 
@@ -62,22 +60,6 @@ export async function sendWrite({ address, account, provider, functionName, args
   if (onHash) onHash(hash);
   const receipt = await client.waitForTransactionReceipt({ hash, ...WAIT });
   return { hash, receipt };
-}
-
-/** Deploy the bundled ClauseGuard source, signed by the wallet. */
-export async function deployContract({ account, provider, onHash }) {
-  const client = walletClient(account, provider);
-  await client.connect("studionet");
-  const hash = await client.deployContract({ code: CONTRACT_SOURCE, args: [] });
-  if (onHash) onHash(hash);
-  const receipt = await client.waitForTransactionReceipt({ hash, ...WAIT });
-  const address =
-    receipt?.to_address ||
-    receipt?.recipient ||
-    receipt?.txDataDecoded?.contractAddress ||
-    receipt?.data?.contract_address ||
-    "";
-  return { hash, receipt, address };
 }
 
 /** A write is only real if consensus accepted it AND execution succeeded. */

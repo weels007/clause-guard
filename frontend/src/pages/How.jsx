@@ -58,17 +58,20 @@ export default function How() {
       </section>
 
       <section className="panel">
-        <h2>On-chain, not mocked</h2>
+        <h2>One shared contract</h2>
         <p>
-          The console talks to GenLayer Studio through <code>genlayer-js</code>. Reads use a wallet-less client; writes and the
-          deploy are signed by your EVM wallet. A write is only shown as done once the committee has decided and the execution
-          returned a value — a transaction that reverts is reported with the contract's own error tag, and an undetermined one
-          says so instead of silently keeping stale numbers.
+          The console talks to a single ClauseGuard deployment whose address lives in{" "}
+          <code>frontend/src/config.js</code>. It is recorded once, by the <b>Deploy Contract</b> workflow, and every visitor
+          reads and writes that same contract — there is no deploy button, so using the app never creates another one.
         </p>
         <p>
-          The Dashboard's <b>Contract</b> panel deploys the bundled <code>contracts/ClauseGuard.py</code> or takes an existing
-          address. Without an address the header badge reads <b>simulation</b> and the same screens run against a deterministic
-          stand-in with identical guards.
+          Reads use a wallet-less <code>genlayer-js</code> client; writes are signed by your EVM wallet and are only shown as done
+          once the committee has decided and the execution returned a value. A reverting transaction is reported with the
+          contract's own error tag, and an undetermined one says so instead of keeping stale numbers.
+        </p>
+        <p>
+          While no address is recorded yet, the header badge reads <b>simulation</b> and the same screens run against a
+          deterministic stand-in with identical guards.
         </p>
       </section>
 

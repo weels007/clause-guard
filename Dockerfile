@@ -6,8 +6,6 @@ WORKDIR /app/frontend
 COPY frontend/package.json ./
 RUN npm install --no-audit --no-fund
 COPY frontend/ ./
-# chain.js imports the contract source with ?raw, so the build needs it too.
-COPY contracts/ClauseGuard.py /app/contracts/ClauseGuard.py
 RUN npm run build
 
 FROM nginx:1.27-alpine

@@ -1,0 +1,62 @@
+name: Deploy Contract
+
+# Deploys ClauseGuard ONCE and records the address in frontend/src/config.js.
+# The console is not a launcher: visitors read and write that single contract
+# and never deploy their own. While an address is already recorded this workflow
+# does nothing, so a push cannot cause a chain of new deployments.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Deploy again and replace the recorded address"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "frontend/src/config.js"
+      - "contracts/ClauseGuard.py"
+      - "scripts/deploy.py"
+      - ".github/workflows/deploy-contract.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-contract
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy once and record the address
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Deploy
+        env:
+          CLAUSEGUARD_TESTER1_PASSWORD: ${{ secrets.CLAUSEGUARD_TESTER1_PASSWORD }}
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            python scripts/deploy.py --force
+          else
+            python scripts/deploy.py
+          fi
+
+      - name: Commit the address
+        run: |
+          if git diff --quiet -- frontend/src/config.js; then
+            echo "No new address to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/config.js
+          git commit -m "Record the deployed ClauseGuard address"
+          git push

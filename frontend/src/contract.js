@@ -1,17 +1,18 @@
 /** ClauseGuard store.
  *
  * Two backends behind one API:
- *  - "chain": reads through genlayer-js from the deployed contract, writes and
- *    deploys signed by the connected wallet (see chain.js).
+ *  - "chain": reads through genlayer-js from the ONE contract configured in
+ *    config.js, writes signed by the connected wallet (see chain.js).
  *  - "sim": the deterministic stand-in mirroring contracts/ClauseGuard.py, used
- *    when no contract address is configured.
+ *    while no deployment address is recorded.
  *
  * Every mutator is async, so a page can `await` the same call in both modes
  * (awaiting a plain value is harmless).
  */
 import { useSyncExternalStore } from "react";
+import { CONTRACT_ADDRESS } from "./config.js";
 import { DEMO_ASSESSMENTS, DEMO_ESCROWS, DEMO_POLICIES, OWNER_ADDRESS, STRANGER_ADDRESS } from "./data.js";
-import { consensusOf, deployContract, readView, receiptError, sendWrite, succeeded } from "./chain.js";
+import { consensusOf, readView, receiptError, sendWrite, succeeded } from "./chain.js";
 
 export class ContractError extends Error {
   constructor(code, message) {
@@ -21,7 +22,6 @@ export class ContractError extends Error {
 }
 
 const STORAGE_KEY = "clauseguard.sim.v2";
-const ADDRESS_KEY = "clauseguard.contract.v1";
 const ZERO = "0x" + "0".repeat(40);
 const BAND_SCORE = { LOW: 20, MEDIUM: 50, HIGH: 80 };
 const POLICY_ID_ALPHABET = /^[a-z0-9._-]+$/;
@@ -590,20 +590,7 @@ function createSimulator() {
 /* ── facade: chain when an address is set, simulator otherwise ─── */
 
 export function loadAddress() {
-  try {
-    return localStorage.getItem(ADDRESS_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function saveAddress(address) {
-  try {
-    if (address) localStorage.setItem(ADDRESS_KEY, address);
-    else localStorage.removeItem(ADDRESS_KEY);
-  } catch {
-    /* storage can be blocked; the session still works */
-  }
+  return String(CONTRACT_ADDRESS ?? "").trim();
 }
 
 const isAddress = (value) => /^0x[0-9a-fA-F]{40}$/.test(String(value ?? "").trim());
@@ -613,14 +600,14 @@ export function createContract() {
   const sim = createSimulator();
   const listeners = new Set();
 
-  let address = loadAddress();
+  const address = loadAddress();
   let chainData = null;
   let provider = null;
   let tx = null;
   let chainError = "";
   let loading = false;
 
-  const isChain = () => Boolean(address);
+  const isChain = () => isAddress(address);
 
   function compose() {
     const simState = sim.getState();
@@ -709,27 +696,6 @@ export function createContract() {
     }
   }
 
-  function setAddress(next) {
-    const clean = String(next ?? "").trim();
-    if (!isAddress(clean)) throw new ContractError("[EXPECTED]:invalid_address", "That is not a valid contract address.");
-    address = clean;
-    chainData = null;
-    tx = null;
-    chainError = "";
-    saveAddress(clean);
-    sync();
-    refresh();
-  }
-
-  function clearAddress() {
-    address = "";
-    chainData = null;
-    tx = null;
-    chainError = "";
-    saveAddress("");
-    sync();
-  }
-
   async function chainWrite(functionName, args, value = 0) {
     if (!isChain()) throw new ContractError("[EXPECTED]:unknown_contract", "No contract address is configured yet.");
     const saved = wallet();
@@ -784,38 +750,6 @@ export function createContract() {
       provider = next || null;
     },
     refresh,
-    deploy: async () => {
-      const saved = wallet();
-      tx = { stage: "deploying" };
-      chainError = "";
-      sync();
-      const result = await deployContract({
-        account: saved.address,
-        provider,
-        onHash: (hash) => {
-          tx = { stage: "deploying", hash };
-          sync();
-        },
-      });
-      if (!succeeded(result.receipt)) {
-        const failure = receiptError(result.receipt);
-        tx = { stage: "failed", consensus: consensusOf(result.receipt) };
-        chainError = failure.message;
-        sync();
-        throw new ContractError(failure.code || "[EXPECTED]:deploy_failed", failure.message);
-      }
-      if (!result.address) {
-        const failure = new ContractError("[EXPECTED]:unknown_contract", "Deployed, but the receipt did not carry the address.");
-        chainError = failure.message;
-        sync();
-        throw failure;
-      }
-      tx = { stage: "deployed", hash: result.hash };
-      setAddress(result.address);
-      return result.address;
-    },
-    setAddress,
-    clearAddress,
 
     actorAddress,
     isOwner: () => {

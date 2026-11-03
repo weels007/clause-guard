@@ -321,30 +321,28 @@ library. Wallets are only visible when the page runs in a browser that has an
 injected provider — MetaMask's or Rabby's in-app browser, or a desktop browser
 with the extension; a plain mobile browser has none, and the chooser says so.
 
-**It runs on-chain.** `frontend/src/chain.js` talks to GenLayer Studio through
-**genlayer-js**: reads go through a wallet-less client (`readContract`), writes
-and deploys are signed by the connected EVM wallet (`writeContract`,
-`deployContract`), and every write waits for the committee
+**It runs on-chain against one shared contract.** `frontend/src/config.js` holds
+that contract's address; `scripts/deploy.py` (run by the **Deploy Contract**
+workflow) deploys it once and writes the address into the config, and every
+visitor then reads and writes that same contract. There is deliberately no deploy
+button: using the console can never create another contract.
+
+`frontend/src/chain.js` talks to GenLayer Studio through **genlayer-js**: reads go
+through a wallet-less client (`readContract`), writes are signed by the connected
+EVM wallet (`writeContract`), and every write waits for the committee
 (`waitForTransactionReceipt({ waitUntil: "decided" })`) before it is treated as
 done. A write only counts when consensus accepted it *and* execution returned
 (`FINISHED_WITH_RETURN`); otherwise the leader receipt's error tag is surfaced
-with the same friendly copy the simulator uses.
+with the same friendly copy the simulator uses. Reads refresh on load and after
+every write, and the Assess result adds the on-chain receipt — status, execution
+result, leader vote, validator count and rounds — next to the agreement the
+contract stored. The header badge says `on-chain` or `simulation`.
 
-The **Contract** panel on the Dashboard is the switch: with a wallet connected it
-deploys the bundled `contracts/ClauseGuard.py` (imported with Vite's `?raw`, so
-the console always ships the same source the tests run against) or accepts an
-existing address. Deploying is a one-off: it creates a **new** contract at a new
-address with empty state and costs fees, so an existing deployment should be
-pasted in instead. The address is remembered in `localStorage`, reads refresh on
-load and after every write, and the Assess result adds the on-chain receipt —
-status, execution result, leader vote, validator count and rounds — next to the
-agreement the contract stored. The header badge says `on-chain` or `simulation`.
-
-Without an address the console falls back to `frontend/src/contract.js`, a
-deterministic stand-in with the same guards, error codes, `ORPHAN`-instead-of-
-revert deposit rule, ledger invariant and caller-scoped `submit_ref` replay
-refusal — useful offline and for demos. Both backends sit behind one API, so the
-pages are identical in either mode.
+While no address is recorded yet, the console falls back to
+`frontend/src/contract.js`, a deterministic stand-in with the same guards, error
+codes, `ORPHAN`-instead-of-revert deposit rule, ledger invariant and
+caller-scoped `submit_ref` replay refusal. Both backends sit behind one API, so
+the pages are identical in either mode.
 
 ## Layout
 
@@ -356,7 +354,10 @@ frontend/                     React + Vite console
 frontend/src/App.jsx          header, wallet chooser, hash router
 frontend/src/pages/           landing, dashboard, policies, assess, escrows, how
 frontend/src/contract.js      store: chain backend + deterministic stand-in
-frontend/src/chain.js         genlayer-js reads, writes, deploy, receipts
+frontend/src/chain.js         genlayer-js reads, writes, receipts
+frontend/src/config.js        the one deployed contract address
+scripts/deploy.py             the only deployer; records the address
+.github/workflows/deploy-contract.yml  deploys once and commits the address
 frontend/src/wallet.js        EIP-6963 discovery and connection
 frontend/src/styles.css       design system
 Dockerfile                    builds frontend/ and serves dist with nginx
