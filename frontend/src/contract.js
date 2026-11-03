@@ -152,6 +152,22 @@ function pickQuote(rules, keywords, verdict) {
   return scored[0].sentence.slice(0, 240);
 }
 
+/** Rules like "transfers above 10000 EUR … are prohibited" carry a real
+ *  threshold; read it so the fallback verdict follows the rule it quotes. */
+function extractThreshold(rules) {
+  const match = String(rules || "").match(
+    /(?:above|over|more than|exceeds|exceeding)\s+([\d][\d,]*(?:\.\d+)?)\s*([A-Z]{2,5})?/i
+  );
+  if (!match) return null;
+  return { value: Number(match[1].replace(/,/g, "")), currency: (match[2] || "").toUpperCase() };
+}
+
+function parseAmount(amount) {
+  const match = String(amount || "").match(/([\d][\d,]*(?:\.\d+)?)\s*([A-Z]{2,5})?/i);
+  if (!match) return null;
+  return { value: Number(match[1].replace(/,/g, "")), currency: (match[2] || "").toUpperCase() };
+}
+
 /** A deterministic stand-in for the committee: same inputs, same verdict. */
 function decide(policy, form) {
   const rules = policy.rules || "";
@@ -161,14 +177,37 @@ function decide(policy, form) {
   const sanctions = /sanction|ofac|blocked|denied/.test(haystack);
   const prohibitedRules = /prohibit|prohibited|refused|must be refused/.test(rules);
 
-  let verdict;
-  if (sanctions && prohibitedRules) verdict = "NON_COMPLIANT";
-  else if (roll < 62) verdict = "COMPLIANT";
-  else if (roll < 84) verdict = "REVIEW";
-  else verdict = "NON_COMPLIANT";
+  const threshold = extractThreshold(rules);
+  const amount = parseAmount(form.amount);
+  const comparable =
+    threshold &&
+    amount &&
+    (!threshold.currency || !amount.currency || threshold.currency === amount.currency);
 
-  const level =
-    verdict === "COMPLIANT" ? (roll % 2 === 0 ? "LOW" : "MEDIUM") : verdict === "NON_COMPLIANT" ? "HIGH" : "MEDIUM";
+  let verdict;
+  let level;
+  if (sanctions && prohibitedRules) {
+    verdict = "NON_COMPLIANT";
+    level = "HIGH";
+  } else if (comparable) {
+    if (amount.value > threshold.value) {
+      verdict = "NON_COMPLIANT";
+      level = "HIGH";
+    } else {
+      verdict = "COMPLIANT";
+      /* Right under the line is the risky side of compliant. */
+      level = amount.value >= threshold.value * 0.9 ? "MEDIUM" : "LOW";
+    }
+  } else if (roll < 62) {
+    verdict = "COMPLIANT";
+    level = roll % 2 === 0 ? "LOW" : "MEDIUM";
+  } else if (roll < 84) {
+    verdict = "REVIEW";
+    level = "MEDIUM";
+  } else {
+    verdict = "NON_COMPLIANT";
+    level = "HIGH";
+  }
 
   const quote = pickQuote(rules, haystack, verdict);
   const quoteFolded = quote.toLowerCase().replace(/[^a-z0-9]/g, "");

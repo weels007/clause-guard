@@ -139,10 +139,10 @@ export default function Assess({ contract, state }) {
 
   const [form, setForm] = useState({
     policy_id: active[0]?.policy_id || "",
-    subject: "",
-    counterparty: "",
-    amount: "",
-    context: "",
+    subject: "ACME GmbH",
+    counterparty: "Acme Supplier GmbH",
+    amount: "4200 EUR",
+    context: "Monthly SaaS invoice, first-time vendor",
     submit_ref: newSubmitRef(),
   });
   const [running, setRunning] = useState(false);
