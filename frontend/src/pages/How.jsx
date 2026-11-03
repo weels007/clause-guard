@@ -76,6 +76,20 @@ export default function How() {
       </section>
 
       <section className="panel">
+        <h2>Adding your own policy</h2>
+        <p>
+          Anyone can add a rule page, not just the owner: a non-owner posts a one-off registration fee (
+          <code>POLICY_FEE_WEI</code>, shown on the Policies page) and the contract holds it until the owner withdraws it —
+          nothing is burned. The owner registers for free, which is how the starter policy and moderation work.
+        </p>
+        <p>
+          The fee is the anti-spam guard: a throwaway policy costs real GEN, and the 100-policy cap still applies. You can edit your
+          own policy until it produces an assessment; after that it is locked so a stored verdict can never be re-pointed at
+          different rules.
+        </p>
+      </section>
+
+      <section className="panel">
         <h2>Money rules</h2>
         <ul className="checks">
           <li>An escrow needs a COMPLIANT assessment the funder ran themselves — one verdict backs one escrow.</li>
