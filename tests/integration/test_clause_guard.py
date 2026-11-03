@@ -143,6 +143,22 @@ def _read(client, contract, method, args=None):
     return client.read_contract(contract, method, args=args or [])
 
 
+def _wait_balance_drop(client, contract, before, amount, attempts=30, pause=10):
+    """Poll until the contract balance has fallen by exactly `amount`.
+
+    The payout is an external message emitted on='finalized': it executes after
+    the parent transaction is finalized, not during it. Reading the balance
+    straight after the write therefore still shows the funds in the contract.
+    """
+    last = int(_read(client, contract, "get_balance"))
+    for _ in range(attempts):
+        if before - last == amount:
+            return last
+        time.sleep(pause)
+        last = int(_read(client, contract, "get_balance"))
+    return last
+
+
 def _assessment_id(client, contract, index=0):
     return _read(client, contract, "get_assessment_ids")["ids"][index]
 
@@ -386,7 +402,7 @@ def test_16_funder_unwinds_and_the_money_moves(client, account, contract):
         ledger["locked_total"]
     )
 
-    balance_after = int(_read(client, contract, "get_balance"))
+    balance_after = _wait_balance_drop(client, contract, balance_before, 1000)
     assert balance_before - balance_after == 1000, (
         f"the payout did not leave the contract: {balance_before} -> {balance_after}"
     )
