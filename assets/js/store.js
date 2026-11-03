@@ -165,6 +165,7 @@ function initialState() {
     ledger: { total_deposited: 1000, total_out: 0, locked_total: 1000 },
     balance: 1000,
     actor: "owner",
+    wallet: { address: null, name: "", rdns: "" },
   };
 }
 
@@ -177,7 +178,16 @@ function load() {
        snapshot that still has every collection the store reads. */
     if (!parsed || !parsed.policies || !parsed.assessments || !parsed.escrows || !parsed.ledger)
       return initialState();
-    return { ...parsed, actor: parsed.actor === "stranger" ? "stranger" : "owner" };
+    const wallet = parsed.wallet && typeof parsed.wallet === "object" ? parsed.wallet : {};
+    return {
+      ...parsed,
+      actor: parsed.actor === "stranger" ? "stranger" : "owner",
+      wallet: {
+        address: typeof wallet.address === "string" ? wallet.address : null,
+        name: typeof wallet.name === "string" ? wallet.name : "",
+        rdns: typeof wallet.rdns === "string" ? wallet.rdns : "",
+      },
+    };
   } catch {
     return initialState();
   }
@@ -196,7 +206,9 @@ export function createStore() {
     for (const listener of listeners) listener(state);
   };
 
-  const actorAddress = () => (state.actor === "stranger" ? STRANGER_ADDRESS : state.owner);
+  /** The signer: a connected wallet wins over the demo owner/stranger toggle. */
+  const actorAddress = () =>
+    state.wallet?.address || (state.actor === "stranger" ? STRANGER_ADDRESS : state.owner);
 
   const api = {
     get state() {
@@ -208,14 +220,38 @@ export function createStore() {
     },
     actorAddress,
     actorLabel() {
+      if (state.wallet?.address) return state.wallet.name || "wallet";
       return state.actor === "stranger" ? "stranger" : "owner";
     },
+    isOwner() {
+      return actorAddress().toLowerCase() === state.owner.toLowerCase();
+    },
     setActor(actor) {
+      /* A connected wallet is the signer; the demo toggle would be a lie. */
+      if (state.wallet?.address) return;
       state = { ...state, actor: actor === "stranger" ? "stranger" : "owner" };
       emit();
     },
+    setWallet({ address, name, rdns }) {
+      const candidate = String(address ?? "");
+      if (!/^0x[0-9a-fA-F]{40}$/.test(candidate)) return;
+      state = {
+        ...state,
+        wallet: {
+          address: candidate,
+          name: name || state.wallet?.name || "Wallet",
+          rdns: rdns ?? state.wallet?.rdns ?? "",
+        },
+      };
+      emit();
+    },
+    clearWallet() {
+      state = { ...state, wallet: { address: null, name: "", rdns: "" } };
+      emit();
+    },
     reset() {
-      state = initialState();
+      /* Reset the simulated contract, not the wallet connection. */
+      state = { ...initialState(), wallet: state.wallet };
       emit();
     },
 

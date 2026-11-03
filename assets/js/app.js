@@ -11,6 +11,14 @@ import {
   toast,
   withBusy,
 } from "./ui.js";
+import {
+  connectProvider,
+  discoverWallets,
+  findWallet,
+  GENLAYER_CHAIN,
+  GENLAYER_CHAIN_ID,
+  walletErrorMessage,
+} from "./wallet.js";
 
 const store = createStore();
 const ROUTES = {
@@ -53,15 +61,32 @@ function setupChrome() {
 
   const actorButton = $("#actor-switch");
   actorButton?.addEventListener("click", () => {
+    if (store.state.wallet?.address) return;
     const next = store.state.actor === "owner" ? "stranger" : "owner";
     store.setActor(next);
     toast("ok", "Acting as " + next, next === "owner" ? "You now sign as the contract owner." : "You now sign as the stranger, to test the guards.");
+  });
+
+  $("#wallet-button")?.addEventListener("click", openWalletModal);
+  $("#wallet-close")?.addEventListener("click", closeWalletModal);
+  $("#wallet-modal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeWalletModal();
   });
 
   document.addEventListener("click", (event) => {
     const action = event.target.closest("[data-action]");
     if (!action) return;
     const { action: name, id } = action.dataset;
+    if (name === "wallet-pick") {
+      const picked = discoveredWallets.find((wallet) => wallet.uuid === action.dataset.uuid);
+      connectWallet(picked);
+      return;
+    }
+    if (name === "wallet-disconnect") {
+      disconnectWallet();
+      closeWalletModal();
+      return;
+    }
     if (name === "reset-demo") {
       if (!window.confirm("Reset the simulated contract to its seeded state?")) return;
       store.reset();
@@ -122,6 +147,229 @@ function syncActorChrome() {
   if (button) button.title = isStranger ? `Signing as ${STRANGER_ADDRESS}` : "Signing as the contract owner";
 }
 
+/* ── wallet ───────────────────────────────────────────────────────────── */
+
+let discoveredWallets = [];
+let activeProvider = null;
+let detachedAccounts = null;
+let detachedChain = null;
+
+function openWalletModal() {
+  const modal = $("#wallet-modal");
+  if (!modal) return;
+
+  const list = $("#wallet-list");
+  const empty = $("#wallet-empty");
+  const foot = $("#wallet-foot");
+  const errorBox = $("#wallet-error");
+  if (errorBox) {
+    errorBox.hidden = true;
+    errorBox.textContent = "";
+  }
+  if (empty) empty.hidden = true;
+  if (foot) foot.hidden = !store.state.wallet?.address;
+  if (list) list.innerHTML = `<li class="wallet-loading">Looking for installed wallets…</li>`;
+
+  if (typeof modal.showModal === "function") {
+    if (!modal.open) modal.showModal();
+  } else {
+    modal.setAttribute("open", "");
+  }
+
+  discoverWallets().then((wallets) => {
+    discoveredWallets = wallets;
+    renderWalletList();
+  });
+}
+
+function closeWalletModal() {
+  const modal = $("#wallet-modal");
+  if (!modal) return;
+  if (typeof modal.close === "function" && modal.open) modal.close();
+  else modal.removeAttribute("open");
+}
+
+function renderWalletList() {
+  const list = $("#wallet-list");
+  const empty = $("#wallet-empty");
+  const foot = $("#wallet-foot");
+  if (!list) return;
+  if (foot) foot.hidden = !store.state.wallet?.address;
+
+  if (!discoveredWallets.length) {
+    list.innerHTML = "";
+    if (empty) empty.hidden = false;
+    return;
+  }
+  if (empty) empty.hidden = true;
+
+  list.innerHTML = discoveredWallets
+    .map(
+      (wallet) => `
+      <li>
+        <button class="wallet-item" type="button" data-action="wallet-pick" data-uuid="${escapeHtml(wallet.uuid)}">
+          ${
+            wallet.icon
+              ? `<img class="wallet-icon" src="${escapeHtml(wallet.icon)}" alt="" width="28" height="28" />`
+              : `<span class="wallet-icon wallet-icon-empty" aria-hidden="true"></span>`
+          }
+          <span class="wallet-meta">
+            <span class="wallet-name">${escapeHtml(wallet.name)}</span>
+            ${wallet.rdns ? `<span class="wallet-rdns">${escapeHtml(wallet.rdns)}</span>` : ""}
+          </span>
+          <span class="wallet-go" aria-hidden="true">→</span>
+        </button>
+      </li>`
+    )
+    .join("");
+}
+
+async function connectWallet(wallet) {
+  if (!wallet) return;
+  const errorBox = $("#wallet-error");
+  const esc = window.CSS && CSS.escape ? CSS.escape(wallet.uuid) : wallet.uuid;
+  const button = document.querySelector(`.wallet-item[data-uuid="${esc}"]`);
+
+  const result = await withBusy(button, async () => {
+    try {
+      return await connectProvider(wallet.provider);
+    } catch (error) {
+      if (errorBox) {
+        errorBox.hidden = false;
+        errorBox.textContent = walletErrorMessage(error);
+      }
+      return null;
+    }
+  });
+
+  if (!result) return;
+
+  attachWalletListeners(wallet.provider, wallet);
+  store.setWallet({ address: result.address, name: wallet.name, rdns: wallet.rdns });
+  closeWalletModal();
+
+  if (!result.onChain) {
+    toast(
+      "error",
+      "Wrong network",
+      `Your wallet is on chain ${result.chainId}. Switch it to GenLayer Studio Network (${GENLAYER_CHAIN_ID}) to transact.`
+    );
+    return;
+  }
+  toast(
+    "ok",
+    `Connected: ${wallet.name}`,
+    `${shortAddress(result.address)} · GenLayer Studio Network (${GENLAYER_CHAIN_ID}).`
+  );
+}
+
+function attachWalletListeners(provider, wallet) {
+  if (activeProvider && activeProvider !== provider) detachWalletListeners();
+  activeProvider = provider;
+
+  detachedAccounts = (accounts) => {
+    if (!Array.isArray(accounts) || !accounts.length) {
+      disconnectWallet(true);
+      return;
+    }
+    const next = accounts[0];
+    const current = store.state.wallet?.address;
+    if (current && current.toLowerCase() === String(next).toLowerCase()) return;
+    store.setWallet({
+      address: next,
+      name: store.state.wallet?.name || wallet?.name || "Wallet",
+      rdns: store.state.wallet?.rdns || wallet?.rdns || "",
+    });
+    toast("ok", "Account switched", shortAddress(next));
+  };
+
+  detachedChain = (chainId) => {
+    if (String(chainId).toLowerCase() === GENLAYER_CHAIN.chainId) {
+      toast("ok", "Network ready", `GenLayer Studio Network (${GENLAYER_CHAIN_ID}).`);
+    } else {
+      toast("error", "Wrong network", `Switch your wallet to GenLayer Studio Network (${GENLAYER_CHAIN_ID}).`);
+    }
+  };
+
+  provider.removeListener?.("accountsChanged", detachedAccounts);
+  provider.removeListener?.("chainChanged", detachedChain);
+  provider.on?.("accountsChanged", detachedAccounts);
+  provider.on?.("chainChanged", detachedChain);
+}
+
+function detachWalletListeners() {
+  if (!activeProvider) return;
+  activeProvider.removeListener?.("accountsChanged", detachedAccounts);
+  activeProvider.removeListener?.("chainChanged", detachedChain);
+  activeProvider = null;
+  detachedAccounts = null;
+  detachedChain = null;
+}
+
+function disconnectWallet(silent = false) {
+  detachWalletListeners();
+  const wasConnected = Boolean(store.state.wallet?.address);
+  store.clearWallet();
+  if (!silent && wasConnected) toast("ok", "Wallet disconnected", "Back to the demo accounts.");
+}
+
+/* Silent reconnect after a reload: the provider is gone, but the choice is not. */
+async function restoreWallet() {
+  const wallet = store.state.wallet;
+  if (!wallet?.address) return;
+
+  let match = null;
+  try {
+    match = await findWallet(wallet.rdns, wallet.name);
+  } catch {
+    match = null;
+  }
+  if (!match) return;
+
+  try {
+    const accounts = await match.provider.request({ method: "eth_accounts" });
+    const stillThere =
+      Array.isArray(accounts) && accounts.some((account) => String(account).toLowerCase() === wallet.address.toLowerCase());
+    if (!stillThere) {
+      store.clearWallet();
+      return;
+    }
+    attachWalletListeners(match.provider, match);
+    store.setWallet({ address: wallet.address, name: wallet.name || match.name, rdns: wallet.rdns || match.rdns });
+  } catch {
+    store.clearWallet();
+  }
+}
+
+function syncWalletChrome() {
+  const button = $("#wallet-button");
+  const label = $("#wallet-label");
+  const actorSwitch = $("#actor-switch");
+  const wallet = store.state.wallet || {};
+  const connected = Boolean(wallet.address);
+
+  if (button) {
+    button.dataset.connected = connected ? "true" : "false";
+    button.title = connected ? `${wallet.name || "Wallet"} · ${wallet.address}` : "Connect an EVM wallet";
+  }
+  if (label) {
+    label.textContent = connected ? `${wallet.name || "Wallet"} · ${shortAddress(wallet.address)}` : "Connect wallet";
+  }
+  if (actorSwitch) actorSwitch.hidden = connected;
+}
+
+function renderWalletNote() {
+  const note = $("#wallet-note");
+  if (!note) return;
+  const connected = Boolean(store.state.wallet?.address);
+  const owner = store.isOwner();
+  note.hidden = !connected || owner;
+  if (note.hidden) return;
+  note.textContent = `Your wallet (${shortAddress(
+    store.actorAddress()
+  )}) is not the contract owner, so policy writes will be refused. Disconnect, or act as the demo owner, to register policies.`;
+}
+
 /* ── router ───────────────────────────────────────────────────────────── */
 
 function render() {
@@ -138,6 +386,7 @@ function render() {
   });
 
   syncActorChrome();
+  syncWalletChrome();
 
   if (route === "landing") renderLanding();
   if (route === "dashboard") renderDashboard();
@@ -284,6 +533,7 @@ function renderPolicies() {
   }
 
   renderOwnershipPanel();
+  renderWalletNote();
   renderPolicySelect();
 }
 
@@ -728,3 +978,4 @@ function renderEscrows() {
 
 setupChrome();
 render();
+restoreWallet();

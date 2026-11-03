@@ -298,17 +298,32 @@ preview link) and it runs.
 - **How it works** — the consensus payload, the citation invariant, the error
   taxonomy and the money rules.
 
-The header badge reads **simulation** on purpose: `assets/js/store.js` is a
-faithful stand-in for `contracts/ClauseGuard.py` — same guards, same error codes,
-same `ORPHAN`-instead-of-revert deposit rule, same ledger invariant, same
-caller-scoped `submit_ref` replay refusal. State lives in `localStorage` so a
-refresh keeps your work, and **Reset data** puts it back to the seeded demo.
-The switch in the header changes the acting account so the access-control guards
-can be tried from both sides.
+**Wallet connection** is real and wallet-agnostic. `assets/js/wallet.js` discovers
+injected EVM wallets with **EIP-6963**, so MetaMask and Rabby each announce their
+own provider and appear as separate rows in the chooser modal — neither one
+overwrites `window.ethereum`, and the one you pick is the one that signs. After
+the choice the page asks for an account, then adds or switches to **GenLayer
+Studio Network** (`chainId 61999` / `0xf22f`, RPC
+`https://studio.genlayer.com/api`) and follows `accountsChanged` and
+`chainChanged` afterwards.
 
-Wiring it to a live deployment means replacing that module with a `genlayer-js`
-(or `genlayer_py` behind an HTTP proxy) client exposing the same method names;
-`app.js` only talks to `store.assess`, `store.createEscrow`, and friends.
+The connected address becomes the acting account for every guard in the console:
+the owner/stranger toggle is hidden while a wallet is connected, a connected
+wallet that is not the contract owner gets an explicit note on the Policies page
+instead of a silent refusal, and escrows and submit references are scoped to the
+real account. Connection is plain EIP-1193, so the page still needs no
+dependency. Wallets are only visible when the page runs in a browser that has an
+injected provider — MetaMask's or Rabby's in-app browser, or a desktop browser
+with the extension; a plain mobile browser has none, and the chooser says so.
+
+**Contract calls are still simulated.** `assets/js/store.js` is a faithful
+stand-in for `contracts/ClauseGuard.py` — same guards, same error codes, same
+`ORPHAN`-instead-of-revert deposit rule, same ledger invariant, same
+caller-scoped `submit_ref` replay refusal. State lives in `localStorage`, and
+**Reset data** puts it back to the seeded demo. Going on-chain means running the
+same method names through `genlayer-js` (`readContract` / `writeContract`) with
+the connected wallet as the signer and a deployed contract address, and keeping
+the simulator only as the offline fallback.
 
 ## Layout
 
@@ -318,7 +333,7 @@ tests/direct/                 in-memory tests (no Docker, milliseconds each)
 tests/integration/            real-network tests (genlayer_py client)
 index.html                    the static console (no build step)
 assets/css/style.css          design system
-assets/js/                    router, views, and the contract stand-in
+assets/js/                    router, views, wallet discovery, contract stand-in
 gltest.config.yaml            network config, used by direct-mode runs
 .github/workflows/ci.yml      lint + direct-mode tests
 .github/workflows/integration.yml  real-network suite, on push or by hand
