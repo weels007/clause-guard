@@ -39,6 +39,14 @@ MAX_SOURCE_URL_CHARS = 400
 MIN_QUOTE_CHARS = 12
 MAX_POLICIES = 100
 MAX_ASSESSMENTS = 5000
+MAX_ESCROWS = 5000
+
+# Escrow lifecycle. Money only ever leaves on an explicit call by the funder.
+ESCROW_FUNDED = "FUNDED"
+ESCROW_RELEASED = "RELEASED"
+ESCROW_REFUNDED = "REFUNDED"
+
+ZERO_HEX = "0" * 40
 
 # Stored risk scores are quantised to this step inside the non-deterministic
 # block, before anything is compared. Both nodes therefore agree on the exact
@@ -77,6 +85,64 @@ class Assessment:
     submit_ref: str
     requester: Address
     created_at: str
+
+
+@allow_storage
+@dataclass
+class Escrow:
+    escrow_id: str
+    funder: Address
+    payee: Address
+    amount: u256
+    assessment_id: str
+    reference: str
+    status: str
+    created_at: str
+
+
+def _addr_hex(addr) -> str:
+    """Canonical form of an address for equality checks."""
+    if hasattr(addr, "as_hex"):
+        return str(addr.as_hex).lower().replace("0x", "")
+    if hasattr(addr, "as_bytes"):
+        return bytes(addr.as_bytes).hex().lower()
+    if hasattr(addr, "hex"):
+        return addr.hex().lower()
+    if hasattr(addr, "__bytes__"):
+        return bytes(addr).hex().lower()
+    return str(addr).lower().replace("0x", "")
+
+
+def _addr_eq(a, b) -> bool:
+    return _addr_hex(a) == _addr_hex(b)
+
+
+def _coerce_addr(value):
+    """Accept an Address, raw bytes, or a hex string (clients send strings)."""
+    if hasattr(value, "as_bytes"):
+        return value
+    return Address(value)
+
+
+@gl.evm.contract_interface
+class _Eoa:
+    class View:
+        pass
+
+    class Write:
+        pass
+
+
+def _pay_out(to, value: int) -> None:
+    """Send GEN to an EOA as an external message.
+
+    `self.balance` is never consulted: the storage ledger (`total_deposited`,
+    `locked_total`, `total_out`) is the source of truth for solvency, exactly
+    like the escrow and vault contracts in this workspace.
+    """
+    if value <= 0:
+        raise gl.vm.UserError(ERROR_EXPECTED + ":invalid_payout")
+    _Eoa(_coerce_addr(to)).emit_transfer(value=u256(value), on="finalized")
 
 
 def _risk_band(score: int) -> str:
@@ -315,8 +381,21 @@ class ClauseGuard(gl.Contract):
     review_count: u32
     high_risk_count: u32
 
+    escrows: TreeMap[str, Escrow]
+    used_assessments: TreeMap[str, bool]
+    escrow_seq: u32
+    total_deposited: u256
+    total_out: u256
+    locked_total: u256
+
     def __init__(self):
         self.owner = gl.message.sender_address
+
+    def __receive__(self) -> None:
+        # Funds may only enter through create_escrow, which records a ledger
+        # entry. A bare transfer would otherwise sit here with no owner able
+        # to withdraw it.
+        raise gl.vm.UserError(ERROR_EXPECTED + ":bare_transfer_rejected")
 
     # ------------------------------------------------------------------
     # internals
@@ -589,6 +668,100 @@ Decision rules:
         return assessment_id
 
     # ------------------------------------------------------------------
+    # escrow: money that only the funder can move
+    # ------------------------------------------------------------------
+
+    @gl.public.write.payable
+    def create_escrow(self, assessment_id: str, payee: Address, reference: str) -> str:
+        """Deposit GEN against a COMPLIANT assessment you ran yourself.
+
+        The deposit is recorded against the caller. Nobody else can release or
+        refund it: both exits check the stored funder against the sender.
+        """
+        amount = int(gl.message.value)
+        if amount <= 0:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":zero_deposit")
+
+        if assessment_id not in self.assessments:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_assessment")
+        assessment = self.assessments[assessment_id]
+        if assessment.verdict != DECISION_COMPLIANT:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":assessment_not_compliant")
+        if not _addr_eq(assessment.requester, gl.message.sender_address):
+            # Only the account that ran the assessment may fund it; otherwise a
+            # COMPLIANT verdict could be recycled by a stranger.
+            raise gl.vm.UserError(ERROR_EXPECTED + ":assessment_not_yours")
+        if assessment_id in self.used_assessments:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":assessment_already_used")
+        if self.escrow_seq >= MAX_ESCROWS:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_limit")
+
+        payee_addr = _coerce_addr(payee)
+        if _addr_hex(payee_addr) == ZERO_HEX:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":zero_payee")
+        if _addr_eq(payee_addr, gl.message.sender_address):
+            raise gl.vm.UserError(ERROR_EXPECTED + ":payee_is_funder")
+
+        clean_reference = _sanitize(reference, MAX_SUBMIT_REF_CHARS)
+
+        self.escrow_seq += 1
+        escrow_id = "esc-" + str(self.escrow_seq)
+        self.escrows[escrow_id] = Escrow(
+            escrow_id=escrow_id,
+            funder=gl.message.sender_address,
+            payee=payee_addr,
+            amount=u256(amount),
+            assessment_id=assessment_id,
+            reference=clean_reference,
+            status=ESCROW_FUNDED,
+            created_at=self._now(),
+        )
+        self.used_assessments[assessment_id] = True
+        self.total_deposited += u256(amount)
+        self.locked_total += u256(amount)
+        return escrow_id
+
+    @gl.public.write
+    def release_escrow(self, escrow_id: str) -> None:
+        """Pay the payee. Only the funder may call this."""
+        if escrow_id not in self.escrows:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_escrow")
+
+        escrow = self.escrows[escrow_id]
+        if escrow.status != ESCROW_FUNDED:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_closed")
+        if not _addr_eq(escrow.funder, gl.message.sender_address):
+            raise gl.vm.UserError(ERROR_EXPECTED + ":not_funder")
+
+        # Ledger first, transfer last: if the transfer fails the whole
+        # transaction reverts and the ledger rolls back with it.
+        escrow.status = ESCROW_RELEASED
+        self.escrows[escrow_id] = escrow
+        self.locked_total -= escrow.amount
+        self.total_out += escrow.amount
+
+        _pay_out(escrow.payee, int(escrow.amount))
+
+    @gl.public.write
+    def refund_escrow(self, escrow_id: str) -> None:
+        """Return the deposit to its owner. Only the funder may call this."""
+        if escrow_id not in self.escrows:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_escrow")
+
+        escrow = self.escrows[escrow_id]
+        if escrow.status != ESCROW_FUNDED:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_closed")
+        if not _addr_eq(escrow.funder, gl.message.sender_address):
+            raise gl.vm.UserError(ERROR_EXPECTED + ":not_funder")
+
+        escrow.status = ESCROW_REFUNDED
+        self.escrows[escrow_id] = escrow
+        self.locked_total -= escrow.amount
+        self.total_out += escrow.amount
+
+        _pay_out(escrow.funder, int(escrow.amount))
+
+    # ------------------------------------------------------------------
     # views
     # ------------------------------------------------------------------
 
@@ -622,6 +795,30 @@ Decision rules:
     @gl.public.view
     def get_assessment_ids(self) -> dict:
         return {"ids": [assessment_id for assessment_id in self.assessment_ids]}
+
+    @gl.public.view
+    def get_escrow(self, escrow_id: str) -> dict:
+        if escrow_id not in self.escrows:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_escrow")
+        escrow = self.escrows[escrow_id]
+        return {
+            "escrow_id": escrow.escrow_id,
+            "funder": _addr_hex(escrow.funder),
+            "payee": _addr_hex(escrow.payee),
+            "amount": int(escrow.amount),
+            "assessment_id": escrow.assessment_id,
+            "reference": escrow.reference,
+            "status": escrow.status,
+        }
+
+    @gl.public.view
+    def get_ledger(self) -> dict:
+        # Invariant: total_deposited == total_out + locked_total.
+        return {
+            "total_deposited": int(self.total_deposited),
+            "total_out": int(self.total_out),
+            "locked_total": int(self.locked_total),
+        }
 
     @gl.public.view
     def get_summary(self) -> dict:

@@ -63,6 +63,9 @@ on differing stack detail.
 | `update_policy(policy_id, name, source_url, guidance)` | owner | Change a policy that has no assessments yet |
 | `set_policy_active(policy_id, active)` | owner | Enable/disable a policy |
 | `assess(policy_id, subject, counterparty, amount, context, submit_ref)` | anyone | Run the assessment, returns assessment id (`ca-1`, `ca-2`, …) |
+| `create_escrow(assessment_id, payee, reference)` (payable) | anyone with their own COMPLIANT assessment | Deposit GEN against that verdict |
+| `release_escrow(escrow_id)` | the escrow's funder only | Pay the payee |
+| `refund_escrow(escrow_id)` | the escrow's funder only | Return the deposit to the funder |
 
 **View**
 
@@ -74,10 +77,35 @@ on differing stack detail.
 | `get_assessment(assessment_id)` | one assessment incl. verified `rule_quote` and `submit_ref` |
 | `get_assessments()` | all assessments keyed by id |
 | `get_assessment_ids()` | `{"ids": [...]}` in insertion order |
+| `get_escrow(escrow_id)` | funder, payee, amount, status, bound assessment |
+| `get_ledger()` | total_deposited, total_out, locked_total |
 | `get_summary()` | totals: total, compliant, non_compliant, review, high_risk, policies |
 
 Risk bands: `LOW` (0–33), `MEDIUM` (34–66), `HIGH` (67–100), computed from the
 quantised score that consensus agreed on.
+
+## Escrow: money only its owner can move
+
+An assessment on its own moves nothing. Value enters only through
+`create_escrow`, which is payable and requires an assessment **you** ran whose
+verdict is `COMPLIANT`:
+
+- the deposit is recorded against `gl.message.sender_address` as `funder`;
+- the assessment is marked used, so one verdict can never back two escrows;
+- a bare transfer to the contract reverts in `__receive__`, so GEN can never sit
+  here without an owner able to withdraw it.
+
+Both exits check the stored funder against the caller:
+
+- `release_escrow` pays the payee — only the funder may call it;
+- `refund_escrow` returns the deposit — only the funder may call it.
+
+The payee has no path to pull funds, a stranger cannot release or refund, and a
+`NON_COMPLIANT` or `REVIEW` verdict cannot be funded at all. Money leaves via
+`emit_transfer` to an EOA, with the ledger updated first and the transfer last:
+if the transfer fails the whole transaction reverts and the ledger rolls back
+with it. Solvency is tracked by the storage ledger (`total_deposited`,
+`locked_total`, `total_out`) — `self.balance` is never consulted.
 
 ## Security properties
 
@@ -99,6 +127,12 @@ quantised score that consensus agreed on.
   walking the whole assessment set.
 - **Reproducibility** — a policy cannot be re-pointed at new rules once it has
   produced assessments; register a new policy id instead.
+- **Funder-only custody** — no method transfers value except `release_escrow`
+  and `refund_escrow`, and both require the caller to equal the escrow's stored
+  funder. `create_escrow` rejects a payee that is the funder or the zero address.
+- **No orphaned funds** — `__receive__` reverts, so value can only enter through
+  a call that records a funder, and the ledger invariant
+  `total_deposited == total_out + locked_total` holds after every state change.
 
 Known limits: there is no ownership transfer yet, so a lost owner key freezes
 policy registration (existing assessments keep working), and `findings` is stored
