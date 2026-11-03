@@ -36,15 +36,18 @@ MAX_NAME_CHARS = 120
 MAX_GUIDANCE_CHARS = 2000
 MAX_POLICY_ID_CHARS = 64
 MAX_SOURCE_URL_CHARS = 400
-MIN_QUOTE_CHARS = 12
+MIN_QUOTE_CHARS = 20
 MAX_POLICIES = 100
 MAX_ASSESSMENTS = 5000
-MAX_ESCROWS = 5000
 
 # Escrow lifecycle. Money only ever leaves on an explicit call by the funder.
 ESCROW_FUNDED = "FUNDED"
 ESCROW_RELEASED = "RELEASED"
 ESCROW_REFUNDED = "REFUNDED"
+# A deposit that arrived with a target we refused (bad verdict, bad payee,
+# recycled assessment). It is stored against the sender so it can always be
+# refunded: a payable call must never leave value stranded.
+ESCROW_ORPHAN = "ORPHAN"
 
 ZERO_HEX = "0" * 40
 
@@ -176,8 +179,17 @@ def _bucket_score(value) -> int:
     return ((score + half) // step) * step
 
 
-def _normalize_text(text: str) -> str:
-    return " ".join(text.split()).lower()
+def _fold(text: str) -> str:
+    """Reduce text to its letters and digits, lowercased.
+
+    Used to compare a model's citation against the fetched page: punctuation,
+    casing and line wrapping must not decide whether a quote is real.
+    """
+    kept = []
+    for character in str(text).lower():
+        if character.isalnum():
+            kept.append(character)
+    return "".join(kept)
 
 
 def _clean_text(text: str) -> str:
@@ -208,13 +220,16 @@ def _normalize_policy_id(raw: str) -> str:
 def _ground_quote(raw, rules_text: str) -> str:
     """Require the citation to be an actual substring of the fetched rules.
 
-    This is the deterministic link between stored reasoning and the source:
-    a model cannot invent a rule that is not on the page.
+    This is the deterministic link between stored reasoning and the source: a
+    model cannot invent a rule that is not on the page. The comparison folds
+    both sides to letters and digits so punctuation or line wrapping cannot
+    make a genuine citation fail.
     """
-    quote = _normalize_text(str(raw))
-    if len(quote) < MIN_QUOTE_CHARS:
+    quote = _clean_text(str(raw))
+    needle = _fold(quote)
+    if len(needle) < MIN_QUOTE_CHARS:
         raise gl.vm.UserError(ERROR_LLM + ":quote_too_short")
-    if quote not in _normalize_text(rules_text):
+    if needle not in _fold(rules_text):
         raise gl.vm.UserError(ERROR_LLM + ":quote_not_in_rules")
     if len(quote) > MAX_QUOTE_CHARS:
         quote = quote[:MAX_QUOTE_CHARS]
@@ -682,41 +697,55 @@ Decision rules:
         if amount <= 0:
             raise gl.vm.UserError(ERROR_EXPECTED + ":zero_deposit")
 
-        if assessment_id not in self.assessments:
-            raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_assessment")
-        assessment = self.assessments[assessment_id]
-        if assessment.verdict != DECISION_COMPLIANT:
-            raise gl.vm.UserError(ERROR_EXPECTED + ":assessment_not_compliant")
-        if not _addr_eq(assessment.requester, gl.message.sender_address):
+        sender = gl.message.sender_address
+        reason = ""
+
+        assessment = self.assessments.get(assessment_id, None)
+        if assessment is None:
+            reason = "unknown_assessment"
+        elif assessment.verdict != DECISION_COMPLIANT:
+            reason = "assessment_not_compliant"
+        elif not _addr_eq(assessment.requester, sender):
             # Only the account that ran the assessment may fund it; otherwise a
             # COMPLIANT verdict could be recycled by a stranger.
-            raise gl.vm.UserError(ERROR_EXPECTED + ":assessment_not_yours")
-        if assessment_id in self.used_assessments:
-            raise gl.vm.UserError(ERROR_EXPECTED + ":assessment_already_used")
-        if self.escrow_seq >= MAX_ESCROWS:
-            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_limit")
+            reason = "assessment_not_yours"
+        elif assessment_id in self.used_assessments:
+            reason = "assessment_already_used"
 
-        payee_addr = _coerce_addr(payee)
-        if _addr_hex(payee_addr) == ZERO_HEX:
-            raise gl.vm.UserError(ERROR_EXPECTED + ":zero_payee")
-        if _addr_eq(payee_addr, gl.message.sender_address):
-            raise gl.vm.UserError(ERROR_EXPECTED + ":payee_is_funder")
+        try:
+            payee_addr = _coerce_addr(payee)
+        except Exception:
+            payee_addr = Address("0x" + ZERO_HEX)
+            if not reason:
+                reason = "invalid_payee"
+
+        if not reason:
+            if _addr_hex(payee_addr) == ZERO_HEX:
+                reason = "zero_payee"
+            elif _addr_eq(payee_addr, sender):
+                reason = "payee_is_funder"
 
         clean_reference = _sanitize(reference, MAX_SUBMIT_REF_CHARS)
 
+        # Nothing below may raise: the value is already attached to this call,
+        # and a payable revert can leave the GEN in the contract with no record
+        # able to refund it. A refused target therefore becomes an orphan
+        # escrow owned by the sender, refundable through refund_escrow.
         self.escrow_seq += 1
         escrow_id = "esc-" + str(self.escrow_seq)
         self.escrows[escrow_id] = Escrow(
             escrow_id=escrow_id,
-            funder=gl.message.sender_address,
+            funder=sender,
             payee=payee_addr,
             amount=u256(amount),
-            assessment_id=assessment_id,
+            assessment_id="" if reason else assessment_id,
             reference=clean_reference,
-            status=ESCROW_FUNDED,
+            status=ESCROW_ORPHAN if reason else ESCROW_FUNDED,
             created_at=self._now(),
         )
-        self.used_assessments[assessment_id] = True
+        if not reason:
+            self.used_assessments[assessment_id] = True
+
         self.total_deposited += u256(amount)
         self.locked_total += u256(amount)
         return escrow_id
@@ -733,6 +762,19 @@ Decision rules:
         if not _addr_eq(escrow.funder, gl.message.sender_address):
             raise gl.vm.UserError(ERROR_EXPECTED + ":not_funder")
 
+        amount = int(escrow.amount)
+        # The contract must still owe the money, and still hold it. The ledger
+        # is the source of truth; the real balance is a second net that catches
+        # a transfer that left while the state was rolled back.
+        if int(self.locked_total) < amount:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_not_held")
+        try:
+            contract_balance = int(self.balance)
+        except Exception:
+            contract_balance = 0
+        if contract_balance > 0 and contract_balance < amount:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_not_held")
+
         # Ledger first, transfer last: if the transfer fails the whole
         # transaction reverts and the ledger rolls back with it.
         escrow.status = ESCROW_RELEASED
@@ -740,7 +782,7 @@ Decision rules:
         self.locked_total -= escrow.amount
         self.total_out += escrow.amount
 
-        _pay_out(escrow.payee, int(escrow.amount))
+        _pay_out(escrow.payee, amount)
 
     @gl.public.write
     def refund_escrow(self, escrow_id: str) -> None:
@@ -749,17 +791,27 @@ Decision rules:
             raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_escrow")
 
         escrow = self.escrows[escrow_id]
-        if escrow.status != ESCROW_FUNDED:
+        if escrow.status not in (ESCROW_FUNDED, ESCROW_ORPHAN):
             raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_closed")
         if not _addr_eq(escrow.funder, gl.message.sender_address):
             raise gl.vm.UserError(ERROR_EXPECTED + ":not_funder")
+
+        amount = int(escrow.amount)
+        if int(self.locked_total) < amount:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_not_held")
+        try:
+            contract_balance = int(self.balance)
+        except Exception:
+            contract_balance = 0
+        if contract_balance > 0 and contract_balance < amount:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_not_held")
 
         escrow.status = ESCROW_REFUNDED
         self.escrows[escrow_id] = escrow
         self.locked_total -= escrow.amount
         self.total_out += escrow.amount
 
-        _pay_out(escrow.funder, int(escrow.amount))
+        _pay_out(escrow.funder, amount)
 
     # ------------------------------------------------------------------
     # views

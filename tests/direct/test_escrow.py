@@ -1,10 +1,15 @@
 """Escrow: deposit GEN against a COMPLIANT assessment, funder-only exits.
 
+Two rules drive this suite:
+
+1. Only the account that deposited can move money out (release or refund).
+2. A payable call never reverts once value is attached, so a refused target
+   becomes a refundable orphan instead of stranding the GEN.
+
 Direct mode cannot execute external EthSend messages, so the payout call itself
-is not exercised here. What is tested is the part that protects the money:
-who may create a deposit, who may release it, who may refund it, and that a
-stranger, a non-compliant verdict, or a recycled assessment can never move
-funds. The ledger arithmetic is asserted after every step.
+is not exercised here. What is tested is the part that protects the money: who
+may create a deposit, who may release or refund it, and that a stranger, a
+non-compliant verdict, or a recycled assessment can never move funds.
 """
 
 import json
@@ -76,11 +81,14 @@ def test_zero_deposit_is_rejected(
         direct_vm, direct_deploy, direct_owner
     )
 
+    # No value is attached, so reverting here cannot strand anything.
     with direct_vm.expect_revert("[EXPECTED]:zero_deposit"):
         contract.create_escrow(assessment_id, direct_alice, "PO-1")
 
+    assert contract.get_ledger()["total_deposited"] == 0
 
-def test_non_compliant_assessment_cannot_be_funded(
+
+def test_non_compliant_assessment_becomes_a_refundable_orphan(
     direct_vm, direct_deploy, direct_owner, direct_alice
 ):
     contract = direct_deploy("contracts/ClauseGuard.py")
@@ -93,12 +101,21 @@ def test_non_compliant_assessment_cannot_be_funded(
     )
 
     direct_vm.value = 1000
-    with direct_vm.expect_revert("[EXPECTED]:assessment_not_compliant"):
-        contract.create_escrow(assessment_id, direct_alice, "PO-1")
+    escrow_id = contract.create_escrow(assessment_id, direct_alice, "PO-1")
     direct_vm.value = 0
 
+    escrow = contract.get_escrow(escrow_id)
+    assert escrow["status"] == "ORPHAN"
+    assert escrow["assessment_id"] == ""
+    assert escrow["amount"] == 1000
 
-def test_stranger_cannot_fund_someone_elses_assessment(
+    # The money is on the books and owned by the sender, so it can come back.
+    ledger = contract.get_ledger()
+    assert ledger["total_deposited"] == 1000
+    assert ledger["locked_total"] == 1000
+
+
+def test_stranger_deposit_against_someone_elses_assessment_is_orphaned(
     direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob
 ):
     contract, assessment_id = _compliant_assessment(
@@ -107,9 +124,15 @@ def test_stranger_cannot_fund_someone_elses_assessment(
 
     direct_vm.sender = direct_bob
     direct_vm.value = 1000
-    with direct_vm.expect_revert("[EXPECTED]:assessment_not_yours"):
-        contract.create_escrow(assessment_id, direct_alice, "PO-1")
+    escrow_id = contract.create_escrow(assessment_id, direct_alice, "PO-1")
     direct_vm.value = 0
+
+    # Bob's GEN is recorded against Bob, so only Bob can get it back.
+    assert contract.get_escrow(escrow_id)["status"] == "ORPHAN"
+
+    direct_vm.sender = direct_owner
+    with direct_vm.expect_revert("[EXPECTED]:not_funder"):
+        contract.refund_escrow(escrow_id)
 
 
 def test_assessment_cannot_be_recycled(
@@ -120,11 +143,13 @@ def test_assessment_cannot_be_recycled(
     )
 
     direct_vm.value = 1000
-    contract.create_escrow(assessment_id, direct_alice, "PO-1")
-
-    with direct_vm.expect_revert("[EXPECTED]:assessment_already_used"):
-        contract.create_escrow(assessment_id, direct_alice, "PO-2")
+    first = contract.create_escrow(assessment_id, direct_alice, "PO-1")
+    second = contract.create_escrow(assessment_id, direct_alice, "PO-2")
     direct_vm.value = 0
+
+    assert contract.get_escrow(first)["status"] == "FUNDED"
+    assert contract.get_escrow(second)["status"] == "ORPHAN"
+    assert contract.get_ledger()["total_deposited"] == 2000
 
 
 def test_payee_cannot_be_the_funder(
@@ -135,12 +160,13 @@ def test_payee_cannot_be_the_funder(
     )
 
     direct_vm.value = 1000
-    with direct_vm.expect_revert("[EXPECTED]:payee_is_funder"):
-        contract.create_escrow(assessment_id, direct_owner, "PO-1")
+    escrow_id = contract.create_escrow(assessment_id, direct_owner, "PO-1")
     direct_vm.value = 0
 
+    assert contract.get_escrow(escrow_id)["status"] == "ORPHAN"
 
-def test_zero_address_payee_is_rejected(
+
+def test_zero_address_payee_is_orphaned(
     direct_vm, direct_deploy, direct_owner
 ):
     contract, assessment_id = _compliant_assessment(
@@ -148,9 +174,27 @@ def test_zero_address_payee_is_rejected(
     )
 
     direct_vm.value = 1000
-    with direct_vm.expect_revert("[EXPECTED]:zero_payee"):
-        contract.create_escrow(assessment_id, "0x" + "0" * 40, "PO-1")
+    escrow_id = contract.create_escrow(assessment_id, "0x" + "0" * 40, "PO-1")
     direct_vm.value = 0
+
+    escrow = contract.get_escrow(escrow_id)
+    assert escrow["status"] == "ORPHAN"
+    assert escrow["payee"] == "0" * 40
+
+
+def test_unparseable_payee_is_orphaned_and_cannot_revert_the_deposit(
+    direct_vm, direct_deploy, direct_owner
+):
+    contract, assessment_id = _compliant_assessment(
+        direct_vm, direct_deploy, direct_owner
+    )
+
+    direct_vm.value = 1000
+    escrow_id = contract.create_escrow(assessment_id, "not-an-address", "PO-1")
+    direct_vm.value = 0
+
+    assert contract.get_escrow(escrow_id)["status"] == "ORPHAN"
+    assert contract.get_ledger()["total_deposited"] == 1000
 
 
 def test_stranger_cannot_release(
@@ -190,6 +234,20 @@ def test_stranger_cannot_refund_to_themselves(
 
     assert contract.get_escrow(escrow_id)["status"] == "FUNDED"
     assert contract.get_ledger()["total_out"] == 0
+
+
+def test_orphan_cannot_be_released(direct_vm, direct_deploy, direct_owner, direct_alice):
+    contract, assessment_id = _compliant_assessment(
+        direct_vm, direct_deploy, direct_owner
+    )
+
+    direct_vm.value = 1000
+    # Same payee as funder: refused, so this deposit is an orphan.
+    escrow_id = contract.create_escrow(assessment_id, direct_owner, "PO-1")
+    direct_vm.value = 0
+
+    with direct_vm.expect_revert("[EXPECTED]:escrow_closed"):
+        contract.release_escrow(escrow_id)
 
 
 def test_unknown_escrow_reverts(direct_vm, direct_deploy, direct_owner):

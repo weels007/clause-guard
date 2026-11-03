@@ -93,7 +93,12 @@ verdict is `COMPLIANT`:
 - the deposit is recorded against `gl.message.sender_address` as `funder`;
 - the assessment is marked used, so one verdict can never back two escrows;
 - a bare transfer to the contract reverts in `__receive__`, so GEN can never sit
-  here without an owner able to withdraw it.
+  here without an owner able to withdraw it;
+- a payable call never reverts once value is attached: if the target is refused
+  (wrong verdict, someone else's assessment, recycled verdict, invalid or zero
+  payee), the deposit is stored as an `ORPHAN` escrow owned by the sender and
+  can be pulled back with `refund_escrow`. Money must never be trapped by a
+  failed call.
 
 Both exits check the stored funder against the caller:
 
@@ -104,8 +109,11 @@ The payee has no path to pull funds, a stranger cannot release or refund, and a
 `NON_COMPLIANT` or `REVIEW` verdict cannot be funded at all. Money leaves via
 `emit_transfer` to an EOA, with the ledger updated first and the transfer last:
 if the transfer fails the whole transaction reverts and the ledger rolls back
-with it. Solvency is tracked by the storage ledger (`total_deposited`,
-`locked_total`, `total_out`) — `self.balance` is never consulted.
+with it. Before any payout the contract checks both that the ledger still owes
+the amount and that the real balance still covers it, so a transfer that left
+while the state was rolled back cannot be paid twice. Solvency is tracked by the
+storage ledger (`total_deposited`, `locked_total`, `total_out`) — `self.balance`
+is only used as that second net.
 
 ## Security properties
 
@@ -131,8 +139,12 @@ with it. Solvency is tracked by the storage ledger (`total_deposited`,
   and `refund_escrow`, and both require the caller to equal the escrow's stored
   funder. `create_escrow` rejects a payee that is the funder or the zero address.
 - **No orphaned funds** — `__receive__` reverts, so value can only enter through
-  a call that records a funder, and the ledger invariant
+  a call that records a funder, and a refused deposit becomes a refundable
+  `ORPHAN` instead of being stranded by a revert. The ledger invariant
   `total_deposited == total_out + locked_total` holds after every state change.
+- **Citations survive formatting** — `rule_quote` is matched after folding both
+  sides to letters and digits, so punctuation, casing or line wrapping cannot
+  make a genuine citation fail or let a fake one pass.
 
 Known limits: there is no ownership transfer yet, so a lost owner key freezes
 policy registration (existing assessments keep working), and `findings` is stored
