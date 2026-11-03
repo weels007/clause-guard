@@ -190,6 +190,38 @@ Two facts about it:
 (`workflow_dispatch`) rather than on every push: it deploys to studionet, pays
 for real execution, and depends on live web and LLM behaviour.
 
+## Seeing transactions in the explorer
+
+Direct mode never touches a chain, so nothing it runs can appear anywhere. Studio
+mode against studionet is different: `factory.deploy()` and every `.transact()`
+are real transactions on that network.
+
+The suite prints the deployed address once and the id of every transaction, so
+run it with `-s` and the output looks like:
+
+```
+[clauseguard] deployed at 0x...
+[clauseguard] register_policy -> 0x...
+[clauseguard] assess -> 0x...
+[clauseguard] create_escrow -> 0x...
+```
+
+Paste either the contract address or a transaction id into the Studio explorer
+([explorer-studio.genlayer.com](https://explorer-studio.genlayer.com)) to see
+the deployment and each call against the contract.
+
+Two caveats:
+
+- studionet state is temporary — that trail can disappear when the environment
+  is reset. For a persistent trail, run the same suite against Bradbury
+  (`--network testnet_bradbury`), which needs your own funded keys.
+- a write that reverts still exists on the network: the assertion says it
+  failed, the explorer shows where.
+
+The same trail can be produced without tests: deploy from the Studio UI and use
+its Execute Transactions panel, or use the CLI (`genlayer deploy`,
+`genlayer write`).
+
 ## Layout
 
 ```
@@ -198,6 +230,7 @@ tests/direct/                 in-memory tests (no Docker, milliseconds each)
 tests/integration/            Studio-mode tests (needs gltest + an environment)
 gltest.config.yaml            network config for Studio-mode integration tests
 .github/workflows/ci.yml      lint + direct-mode tests
+.github/workflows/integration.yml  Studio-mode suite, manual dispatch
 requirements.txt              pinned SDK, test suite, linter
 ```
 

@@ -48,7 +48,22 @@ CONSENSUS = {
 @pytest.fixture(scope="module")
 def gate(default_account):
     factory = get_contract_factory("ClauseGuard")
-    return factory.deploy(args=[], account=default_account)
+    contract = factory.deploy(args=[], account=default_account)
+    # Printed once, with -s, so the deployed address is easy to find in the
+    # explorer and every transaction can be traced back to this contract.
+    print(f"[clauseguard] deployed at {contract.address}")
+    return contract
+
+
+def _tx_id(receipt):
+    for key in ("hash", "tx_id", "transaction_hash", "id"):
+        try:
+            value = receipt.get(key)
+        except Exception:
+            value = None
+        if value:
+            return str(value)
+    return "(no id in receipt)"
 
 
 def _transact(contract, method, args, account=None, value=0):
@@ -58,7 +73,9 @@ def _transact(contract, method, args, account=None, value=0):
         kwargs["account"] = account
     if value:
         kwargs["value"] = value
-    return call.transact(**kwargs)
+    receipt = call.transact(**kwargs)
+    print(f"[clauseguard] {method} -> {_tx_id(receipt)}")
+    return receipt
 
 
 def _assessment_id(contract, index=0):
