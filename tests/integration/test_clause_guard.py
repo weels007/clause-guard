@@ -40,8 +40,10 @@ ALLOWED_VERDICTS = ("COMPLIANT", "NON_COMPLIANT", "REVIEW")
 
 CONSENSUS = {
     "consensus_max_rotations": 3,
-    "wait_interval": 1000,
-    "wait_retries": 20,
+    # studionet is rate limited and consensus on an LLM decision takes minutes,
+    # not seconds: a 20s window just returns the transaction still PENDING.
+    "wait_interval": 3000,
+    "wait_retries": 100,
 }
 
 
@@ -74,6 +76,14 @@ def _transact(contract, method, args, account=None, value=0):
     if value:
         kwargs["value"] = value
     receipt = call.transact(**kwargs)
+    if not tx_execution_succeeded(receipt):
+        print(
+            f"[clauseguard] {method} did NOT succeed: "
+            f"status={receipt.get('status_name')} "
+            f"result={receipt.get('result_name')} "
+            f"rounds={receipt.get('num_of_rounds')} "
+            f"tx={receipt.get('tx_id')}"
+        )
     print(f"[clauseguard] {method} -> {_tx_id(receipt)}")
     return receipt
 
