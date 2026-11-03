@@ -86,3 +86,11 @@ def test_unknown_assessment_view_reverts(direct_vm, direct_deploy):
 
     with direct_vm.expect_revert("[EXPECTED]:unknown_assessment"):
         contract.get_assessment("ca-99")
+
+
+
+def test_get_escrows_lists_custody(direct_vm, direct_deploy):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+
+    # The frontend enumerates custody through this single view.
+    assert contract.get_escrows() == {}

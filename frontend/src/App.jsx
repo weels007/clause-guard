@@ -75,6 +75,7 @@ export default function App() {
     }
     providerRef.current = null;
     handlersRef.current = null;
+    contract.setProvider(null);
   }, []);
 
   const attach = useCallback(
@@ -110,12 +111,18 @@ export default function App() {
       provider.on?.("accountsChanged", onAccounts);
       provider.on?.("chainChanged", onChain);
       providerRef.current = provider;
+      contract.setProvider(provider);
       listeners.current = { onAccounts, onChain };
     },
     [detach]
   );
 
   useEffect(() => () => detach(), [detach]);
+
+  /* A saved contract address is read immediately, before any wallet exists. */
+  useEffect(() => {
+    if (contract.isChain()) contract.refresh();
+  }, []);
 
   /* Silent reconnect: the provider is gone after a reload, the choice is not. */
   useEffect(() => {
@@ -226,7 +233,7 @@ export default function App() {
               </svg>
             </span>
             <span className="brand-name">ClauseGuard</span>
-            <span className="brand-badge">simulation</span>
+            <span className="brand-badge">{state.mode === "chain" ? "on-chain" : "simulation"}</span>
           </a>
 
           <nav className="nav-links" aria-label="Primary">

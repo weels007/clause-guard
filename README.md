@@ -321,14 +321,28 @@ library. Wallets are only visible when the page runs in a browser that has an
 injected provider — MetaMask's or Rabby's in-app browser, or a desktop browser
 with the extension; a plain mobile browser has none, and the chooser says so.
 
-**Contract calls are still simulated.** `frontend/src/contract.js` is a faithful
-stand-in for `contracts/ClauseGuard.py` — same guards, same error codes, same
-`ORPHAN`-instead-of-revert deposit rule, same ledger invariant, same
-caller-scoped `submit_ref` replay refusal. State lives in `localStorage`, and
-**Reset data** puts it back to the seeded demo. Going on-chain means running the
-same method names through `genlayer-js` (`readContract` / `writeContract`) with
-the connected wallet as the signer and a deployed contract address, and keeping
-the simulator only as the offline fallback.
+**It runs on-chain.** `frontend/src/chain.js` talks to GenLayer Studio through
+**genlayer-js**: reads go through a wallet-less client (`readContract`), writes
+and deploys are signed by the connected EVM wallet (`writeContract`,
+`deployContract`), and every write waits for the committee
+(`waitForTransactionReceipt({ waitUntil: "decided" })`) before it is treated as
+done. A write only counts when consensus accepted it *and* execution returned
+(`FINISHED_WITH_RETURN`); otherwise the leader receipt's error tag is surfaced
+with the same friendly copy the simulator uses.
+
+The **Contract** panel on the Dashboard is the switch: with a wallet connected it
+deploys the bundled `contracts/ClauseGuard.py` (imported with Vite's `?raw`, so
+the console always ships the same source the tests run against) or accepts an
+existing address. The address is remembered in `localStorage`, reads refresh on
+load and after every write, and the Assess result adds the on-chain receipt —
+status, execution result, leader vote, validator count and rounds — next to the
+agreement the contract stored. The header badge says `on-chain` or `simulation`.
+
+Without an address the console falls back to `frontend/src/contract.js`, a
+deterministic stand-in with the same guards, error codes, `ORPHAN`-instead-of-
+revert deposit rule, ledger invariant and caller-scoped `submit_ref` replay
+refusal — useful offline and for demos. Both backends sit behind one API, so the
+pages are identical in either mode.
 
 ## Layout
 
@@ -339,7 +353,8 @@ tests/integration/            real-network tests (genlayer_py client)
 frontend/                     React + Vite console
 frontend/src/App.jsx          header, wallet chooser, hash router
 frontend/src/pages/           landing, dashboard, policies, assess, escrows, how
-frontend/src/contract.js      simulated contract mirroring ClauseGuard.py
+frontend/src/contract.js      store: chain backend + deterministic stand-in
+frontend/src/chain.js         genlayer-js reads, writes, deploy, receipts
 frontend/src/wallet.js        EIP-6963 discovery and connection
 frontend/src/styles.css       design system
 Dockerfile                    builds frontend/ and serves dist with nginx

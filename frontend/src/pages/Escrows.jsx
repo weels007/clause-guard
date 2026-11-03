@@ -44,11 +44,13 @@ export default function Escrows({ contract, state }) {
     setError("");
     await new Promise((resolve) => setTimeout(resolve, 160));
     try {
-      const escrow = contract.createEscrow(fund);
-      if (escrow.status === "ORPHAN") {
+      const escrow = await contract.createEscrow(fund);
+      if (escrow && escrow.status === "ORPHAN") {
         toast("error", "Deposit held as ORPHAN", `Refused: ${escrow.refusal}. It is recorded against you and refundable.`);
-      } else {
+      } else if (escrow) {
         toast("ok", "Escrow funded", `${formatWei(escrow.amount)} wei locked in ${escrow.escrow_id}.`);
+      } else {
+        toast("ok", "Deposit accepted", "The transaction is on chain; press Refresh on the Dashboard to read it.");
       }
       setOpen(false);
     } catch (err) {
@@ -60,13 +62,13 @@ export default function Escrows({ contract, state }) {
     }
   };
 
-  const settle = (escrow, kind) => {
+  const settle = async (escrow, kind) => {
     const verb = kind === "release" ? "release" : "refund";
     const target = kind === "release" ? "the payee" : "the funder";
     if (!window.confirm(`${verb} ${formatWei(escrow.amount)} wei to ${target}?`)) return;
     try {
-      if (kind === "release") contract.releaseEscrow(escrow.escrow_id);
-      else contract.refundEscrow(escrow.escrow_id);
+      if (kind === "release") await contract.releaseEscrow(escrow.escrow_id);
+      else await contract.refundEscrow(escrow.escrow_id);
       toast("ok", `Escrow ${verb}d`, `${escrow.escrow_id} · ${formatWei(escrow.amount)} wei sent to ${target}.`);
     } catch (err) {
       toast("error", "Not settled", humanizeError(err));

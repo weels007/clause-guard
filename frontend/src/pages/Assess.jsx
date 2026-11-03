@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { explorerTx } from "../chain.js";
 import { humanizeError } from "../contract.js";
 import { newSubmitRef, shortAddress } from "../format.js";
 import { Chip, toast } from "../ui.jsx";
@@ -25,7 +26,7 @@ function Progress({ step }) {
   );
 }
 
-function Verdict({ record }) {
+function Verdict({ record, receipt, hash }) {
   const grounded = Boolean(record.rule_quote);
   return (
     <div className="result-body">
@@ -94,6 +95,39 @@ function Verdict({ record }) {
       <p className="hint" style={{ marginTop: 0 }}>
         rules_digest {shortAddress(record.rules_digest, 16, 10)}
       </p>
+
+      {receipt && (
+        <div className="consensus">
+          <header>
+            <span>on-chain receipt</span>
+            <span>{receipt.status || "decided"}</span>
+          </header>
+          <div className="row">
+            <span>execution</span>
+            <span className="agree">{receipt.execution || "—"}</span>
+          </div>
+          <div className="row">
+            <span>leader vote</span>
+            <span className="agree">{receipt.leaderVote || "—"}</span>
+          </div>
+          <div className="row">
+            <span>validators</span>
+            <span>{receipt.validators || 0}</span>
+          </div>
+          <div className="row">
+            <span>rounds</span>
+            <span>{receipt.rounds ?? "—"}</span>
+          </div>
+          {hash && (
+            <div className="row">
+              <span>transaction</span>
+              <a className="link" href={explorerTx(hash)} target="_blank" rel="noreferrer noopener">
+                {shortAddress(hash, 10, 8)}
+              </a>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -139,7 +173,10 @@ export default function Assess({ contract, state }) {
     }
 
     try {
-      const record = contract.assess(form);
+      const record = await contract.assess(form);
+      if (!record) {
+        throw new Error("The transaction was accepted, but the verdict is not readable yet. Press Refresh on the Dashboard.");
+      }
       setForm((current) => ({ ...current, submit_ref: newSubmitRef() }));
       setResult(record);
       toast("ok", "Verdict recorded", `${record.assessment_id} · ${record.verdict} · ${record.risk_band} risk.`);
@@ -250,7 +287,7 @@ export default function Assess({ contract, state }) {
           </div>
 
           {running && <Progress step={step} />}
-          {!running && result && <Verdict record={result} />}
+          {!running && result && <Verdict record={result} receipt={state.tx?.consensus} hash={state.tx?.hash} />}
           {!running && !result && !error ? (
             <p className="empty">Run an assessment to see the verdict, the citation it relied on, and what the committee compared.</p>
           ) : null}

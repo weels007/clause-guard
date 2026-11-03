@@ -971,6 +971,24 @@ Decision rules:
         }
 
     @gl.public.view
+    def get_escrows(self) -> dict:
+        # One read for the whole custody table, so a client never has to guess
+        # escrow ids. Mirrors get_assessments.
+        return {
+            key: {
+                "escrow_id": escrow.escrow_id,
+                "funder": _addr_hex(escrow.funder),
+                "payee": _addr_hex(escrow.payee),
+                "amount": int(escrow.amount),
+                "assessment_id": escrow.assessment_id,
+                "reference": escrow.reference,
+                "status": escrow.status,
+                "created_ts": int(escrow.created_ts),
+            }
+            for key, escrow in self.escrows.items()
+        }
+
+    @gl.public.view
     def is_escrow_expired(self, escrow_id: str) -> bool:
         if escrow_id not in self.escrows:
             raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_escrow")

@@ -29,10 +29,10 @@ export default function Policies({ contract, state }) {
     await new Promise((resolve) => setTimeout(resolve, 160));
     try {
       if (editing) {
-        contract.updatePolicy({ ...form, policy_id: editing });
+        await contract.updatePolicy({ ...form, policy_id: editing });
         toast("ok", "Policy updated", "The rules URL is saved before any assessment uses it.");
       } else {
-        contract.registerPolicy(form);
+        await contract.registerPolicy(form);
         toast("ok", "Policy registered", "It locks once its first assessment runs.");
       }
       setEditing(null);
@@ -63,18 +63,18 @@ export default function Policies({ contract, state }) {
     setError("");
   };
 
-  const toggle = (policy) => {
+  const toggle = async (policy) => {
     try {
-      contract.setPolicyActive(policy.policy_id, !policy.active);
+      await contract.setPolicyActive(policy.policy_id, !policy.active);
       toast("ok", policy.active ? "Policy disabled" : "Policy enabled", `Assessments can${policy.active ? " no longer" : " now"} use it.`);
     } catch (err) {
       toast("error", "Not changed", humanizeError(err));
     }
   };
 
-  const nominate = () => {
+  const nominate = async () => {
     try {
-      contract.transferOwnership(nominee);
+      await contract.transferOwnership(nominee);
       setNominee("");
       toast("ok", "Nominated", "The successor must accept before ownership moves.");
     } catch (err) {
@@ -82,9 +82,9 @@ export default function Policies({ contract, state }) {
     }
   };
 
-  const accept = () => {
+  const accept = async () => {
     try {
-      contract.acceptOwnership();
+      await contract.acceptOwnership();
       toast("ok", "Ownership moved", "You are now the contract owner.");
     } catch (err) {
       toast("error", "Ownership not accepted", humanizeError(err));

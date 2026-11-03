@@ -1,12 +1,17 @@
-/** Simulated ClauseGuard contract, ported from the vanilla console.
+/** ClauseGuard store.
  *
- * Mirrors contracts/ClauseGuard.py: the same guards, statuses, ledger
- * invariant and duplicate-submit rule, so every flow works offline and
- * deterministically. Swapping this module for a genlayer-js client is the only
- * change a live wiring needs.
+ * Two backends behind one API:
+ *  - "chain": reads through genlayer-js from the deployed contract, writes and
+ *    deploys signed by the connected wallet (see chain.js).
+ *  - "sim": the deterministic stand-in mirroring contracts/ClauseGuard.py, used
+ *    when no contract address is configured.
+ *
+ * Every mutator is async, so a page can `await` the same call in both modes
+ * (awaiting a plain value is harmless).
  */
 import { useSyncExternalStore } from "react";
 import { DEMO_ASSESSMENTS, DEMO_ESCROWS, DEMO_POLICIES, OWNER_ADDRESS, STRANGER_ADDRESS } from "./data.js";
+import { consensusOf, deployContract, readView, receiptError, sendWrite, succeeded } from "./chain.js";
 
 export class ContractError extends Error {
   constructor(code, message) {
@@ -16,12 +21,15 @@ export class ContractError extends Error {
 }
 
 const STORAGE_KEY = "clauseguard.sim.v2";
+const ADDRESS_KEY = "clauseguard.contract.v1";
 const ZERO = "0x" + "0".repeat(40);
 const BAND_SCORE = { LOW: 20, MEDIUM: 50, HIGH: 80 };
 const POLICY_ID_ALPHABET = /^[a-z0-9._-]+$/;
 
 const ERROR_TEXT = {
   unauthorized: "Only the contract owner can do that.",
+  wallet_required: "Connect an EVM wallet first.",
+  unknown_contract: "No contract address is configured yet.",
   policy_exists: "That policy id is already registered.",
   policy_limit: "The contract has reached its policy limit.",
   empty_policy_id: "A policy id is required.",
@@ -40,12 +48,22 @@ const ERROR_TEXT = {
   assessment_limit: "The contract has reached its assessment limit.",
   zero_deposit: "A deposit must be positive.",
   unknown_escrow: "That escrow does not exist.",
+  escrow_locked: "That escrow cannot be moved right now.",
   escrow_closed: "That escrow is already settled.",
+  escrow_not_held: "The contract no longer holds that deposit.",
   not_funder: "Only the funder can move this escrow.",
   zero_owner: "The zero address cannot own the contract.",
   no_pending_owner: "Nobody has been nominated to take over.",
   not_pending_owner: "Only the nominated address can accept.",
   invalid_address: "That is not a valid address.",
+  invalid_payee: "That payee address is not valid.",
+  zero_payee: "The payee cannot be the zero address.",
+  payee_is_funder: "The payee cannot be the funder.",
+  unknown_assessment: "That assessment does not exist.",
+  assessment_not_compliant: "Only a COMPLIANT assessment can back an escrow.",
+  assessment_not_yours: "Only the account that ran the assessment can fund it.",
+  assessment_already_used: "That assessment already backs an escrow.",
+  undetermined: "Validators did not reach consensus, so nothing was written.",
 };
 
 export function humanizeError(error) {
@@ -102,11 +120,7 @@ function hash(text) {
   return Math.abs(h);
 }
 
-/** Pick a whole, long enough sentence that supports the verdict.
- *
- * Splitting on punctuation produces fragments like "Article 4." — a quote that
- * cannot be grounded and would downgrade every assessment to REVIEW.
- */
+/** Pick a whole, long enough sentence that supports the verdict. */
 function pickQuote(rules, keywords, verdict) {
   const candidates = (String(rules || "").match(/[^.!?]+[.!?]*/g) || [])
     .map((sentence) => sentence.trim())
@@ -190,11 +204,7 @@ function initialState() {
     assessments,
     escrows,
     usedAssessments: { "ca-1": true },
-    submitRefs: {
-      [`${OWNER_ADDRESS}|demo-1`]: "ca-1",
-      [`${OWNER_ADDRESS}|demo-2`]: "ca-2",
-      [`${OWNER_ADDRESS}|demo-3`]: "ca-3",
-    },
+    submitRefs: {},
     nextAssessmentId: 4,
     nextEscrowId: 2,
     ledger: { total_deposited: 1000, total_out: 0, locked_total: 1000 },
@@ -204,13 +214,11 @@ function initialState() {
   };
 }
 
-function load() {
+function loadSim() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialState();
     const parsed = JSON.parse(raw);
-    /* localStorage is attacker-writable in a shared browser: only trust a
-       snapshot that still has every collection the store reads. */
     if (!parsed || !parsed.policies || !parsed.assessments || !parsed.escrows || !parsed.ledger)
       return initialState();
     const wallet = parsed.wallet && typeof parsed.wallet === "object" ? parsed.wallet : {};
@@ -228,8 +236,10 @@ function load() {
   }
 }
 
-export function createContract() {
-  let state = load();
+/* ── simulator ────────────────────────────────────────────────── */
+
+function createSimulator() {
+  let state = loadSim();
   const listeners = new Set();
 
   const emit = () => {
@@ -241,7 +251,6 @@ export function createContract() {
     for (const listener of listeners) listener();
   };
 
-  /** The signer: a connected wallet wins over the demo owner/stranger toggle. */
   const actorAddress = () =>
     state.wallet?.address || (state.actor === "stranger" ? STRANGER_ADDRESS : state.owner);
 
@@ -260,7 +269,6 @@ export function createContract() {
     isOwner: () => actorAddress().toLowerCase() === state.owner.toLowerCase(),
 
     setActor(actor) {
-      /* A connected wallet is the signer; the demo toggle would be a lie. */
       if (state.wallet?.address) return;
       state = { ...state, actor: actor === "stranger" ? "stranger" : "owner" };
       emit();
@@ -286,27 +294,9 @@ export function createContract() {
     },
 
     reset() {
-      /* Reset the simulated contract, not the wallet connection. */
       state = { ...initialState(), wallet: state.wallet };
       emit();
     },
-
-    summary(snapshot = state) {
-      const list = Object.values(snapshot.assessments);
-      return {
-        policies: Object.keys(snapshot.policies).length,
-        total: list.length,
-        compliant: list.filter((a) => a.verdict === "COMPLIANT").length,
-        non_compliant: list.filter((a) => a.verdict === "NON_COMPLIANT").length,
-        review: list.filter((a) => a.verdict === "REVIEW").length,
-        high_risk: list.filter((a) => a.risk_band === "HIGH").length,
-      };
-    },
-
-    ledgerOk: (snapshot = state) =>
-      snapshot.ledger.total_deposited === snapshot.ledger.total_out + snapshot.ledger.locked_total,
-
-    isEscrowExpired: (escrow) => Math.floor(Date.now() / 1000) >= Number(escrow.created_ts) + 30 * 86400,
 
     registerPolicy({ policy_id, name, source_url, guidance }) {
       requireOwner();
@@ -476,7 +466,6 @@ export function createContract() {
       else if (assessment.requester.toLowerCase() !== requester.toLowerCase()) refusal = "assessment_not_yours";
       else if (state.usedAssessments[assessment_id]) refusal = "assessment_already_used";
 
-      const target = cleanPayee;
       if (!refusal) {
         if (!/^0x[0-9a-fA-F]{40}$/.test(cleanPayee)) refusal = "invalid_payee";
         else if (cleanPayee.toLowerCase() === ZERO) refusal = "zero_payee";
@@ -487,7 +476,7 @@ export function createContract() {
       const escrow = {
         escrow_id: id,
         funder: requester,
-        payee: refusal ? ZERO : target,
+        payee: refusal ? ZERO : cleanPayee,
         amount: wei,
         assessment_id: refusal ? "" : assessment_id,
         reference: sanitize(reference, 64),
@@ -557,6 +546,339 @@ export function createContract() {
   };
 
   return api;
+}
+
+/* ── facade: chain when an address is set, simulator otherwise ─── */
+
+export function loadAddress() {
+  try {
+    return localStorage.getItem(ADDRESS_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveAddress(address) {
+  try {
+    if (address) localStorage.setItem(ADDRESS_KEY, address);
+    else localStorage.removeItem(ADDRESS_KEY);
+  } catch {
+    /* storage can be blocked; the session still works */
+  }
+}
+
+const isAddress = (value) => /^0x[0-9a-fA-F]{40}$/.test(String(value ?? "").trim());
+const idNumber = (value) => Number(String(value ?? "").replace(/[^0-9]/g, "")) || 0;
+
+export function createContract() {
+  const sim = createSimulator();
+  const listeners = new Set();
+
+  let address = loadAddress();
+  let chainData = null;
+  let provider = null;
+  let tx = null;
+  let chainError = "";
+  let loading = false;
+
+  const isChain = () => Boolean(address);
+
+  function compose() {
+    const simState = sim.getState();
+    if (!isChain()) {
+      return { ...simState, mode: "sim", address: "", loading, tx, chainError };
+    }
+    const escrows = chainData?.escrows || {};
+    const usedAssessments = {};
+    for (const escrow of Object.values(escrows)) {
+      if (escrow.assessment_id) usedAssessments[escrow.assessment_id] = true;
+    }
+    return {
+      owner: chainData?.owner || "",
+      pendingOwner: chainData?.pendingOwner || ZERO,
+      policies: chainData?.policies || {},
+      assessments: chainData?.assessments || {},
+      escrows,
+      usedAssessments,
+      submitRefs: {},
+      nextAssessmentId: 0,
+      nextEscrowId: 0,
+      ledger: chainData?.ledger || { total_deposited: 0, total_out: 0, locked_total: 0 },
+      balance: chainData?.balance ?? 0,
+      actor: "owner",
+      wallet: simState.wallet,
+      mode: "chain",
+      address,
+      loading,
+      tx,
+      chainError,
+    };
+  }
+
+  let state = compose();
+  const emit = () => listeners.forEach((listener) => listener());
+
+  const sync = () => {
+    state = compose();
+    emit();
+  };
+
+  sim.subscribe(sync);
+
+  const wallet = () => {
+    const saved = sim.getState().wallet;
+    if (!saved?.address) throw new ContractError("[EXPECTED]:wallet_required", "Connect an EVM wallet first.");
+    if (!provider) throw new ContractError("[EXPECTED]:wallet_required", "Reconnect the wallet: the page lost its provider.");
+    return saved;
+  };
+
+  const actorAddress = () => (isChain() ? sim.getState().wallet?.address || "" : sim.actorAddress());
+
+  async function refresh() {
+    if (!isChain()) return;
+    loading = true;
+    sync();
+    try {
+      const [owner, pendingOwner, policies, assessments, escrows, ledger, balance] = await Promise.all([
+        readView(address, "get_owner"),
+        readView(address, "get_pending_owner"),
+        readView(address, "get_policies"),
+        readView(address, "get_assessments"),
+        readView(address, "get_escrows"),
+        readView(address, "get_ledger"),
+        readView(address, "get_balance"),
+      ]);
+      chainData = {
+        owner: String(owner || ""),
+        pendingOwner: String(pendingOwner || ZERO),
+        policies: policies || {},
+        assessments: assessments || {},
+        escrows: escrows || {},
+        ledger: {
+          total_deposited: Number(ledger?.total_deposited || 0),
+          total_out: Number(ledger?.total_out || 0),
+          locked_total: Number(ledger?.locked_total || 0),
+        },
+        balance: Number(balance || 0),
+      };
+      chainError = "";
+    } catch (error) {
+      chainError = error?.message || String(error);
+    } finally {
+      loading = false;
+      sync();
+    }
+  }
+
+  function setAddress(next) {
+    const clean = String(next ?? "").trim();
+    if (!isAddress(clean)) throw new ContractError("[EXPECTED]:invalid_address", "That is not a valid contract address.");
+    address = clean;
+    chainData = null;
+    tx = null;
+    chainError = "";
+    saveAddress(clean);
+    sync();
+    refresh();
+  }
+
+  function clearAddress() {
+    address = "";
+    chainData = null;
+    tx = null;
+    chainError = "";
+    saveAddress("");
+    sync();
+  }
+
+  async function chainWrite(functionName, args, value = 0) {
+    if (!isChain()) throw new ContractError("[EXPECTED]:unknown_contract", "No contract address is configured yet.");
+    const saved = wallet();
+    tx = { stage: "signing", functionName };
+    chainError = "";
+    sync();
+    try {
+      const result = await sendWrite({
+        address,
+        account: saved.address,
+        provider,
+        functionName,
+        args,
+        value,
+        onHash: (hash) => {
+          tx = { stage: "submitted", hash, functionName };
+          sync();
+        },
+      });
+      const consensus = consensusOf(result.receipt);
+      if (!succeeded(result.receipt)) {
+        const failure = receiptError(result.receipt);
+        tx = { stage: "failed", hash: result.hash, consensus, functionName };
+        chainError = failure.message;
+        sync();
+        throw new ContractError(failure.code || "[EXPECTED]:reverted", failure.message);
+      }
+      tx = { stage: "accepted", hash: result.hash, consensus, functionName };
+      sync();
+      await refresh();
+      return result;
+    } catch (error) {
+      if (tx && tx.stage === "signing") {
+        tx = { stage: "failed", functionName, error: error?.message || String(error) };
+        sync();
+      }
+      throw error;
+    }
+  }
+
+  return {
+    getState: () => state,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    isChain,
+    get address() {
+      return address;
+    },
+    setProvider(next) {
+      provider = next || null;
+    },
+    refresh,
+    deploy: async () => {
+      const saved = wallet();
+      tx = { stage: "deploying" };
+      chainError = "";
+      sync();
+      const result = await deployContract({
+        account: saved.address,
+        provider,
+        onHash: (hash) => {
+          tx = { stage: "deploying", hash };
+          sync();
+        },
+      });
+      if (!succeeded(result.receipt)) {
+        const failure = receiptError(result.receipt);
+        tx = { stage: "failed", consensus: consensusOf(result.receipt) };
+        chainError = failure.message;
+        sync();
+        throw new ContractError(failure.code || "[EXPECTED]:deploy_failed", failure.message);
+      }
+      if (!result.address) {
+        const failure = new ContractError("[EXPECTED]:unknown_contract", "Deployed, but the receipt did not carry the address.");
+        chainError = failure.message;
+        sync();
+        throw failure;
+      }
+      tx = { stage: "deployed", hash: result.hash };
+      setAddress(result.address);
+      return result.address;
+    },
+    setAddress,
+    clearAddress,
+
+    actorAddress,
+    isOwner: () => {
+      const me = actorAddress();
+      return Boolean(me) && Boolean(state.owner) && me.toLowerCase() === state.owner.toLowerCase();
+    },
+
+    setActor(actor) {
+      if (isChain()) return;
+      sim.setActor(actor);
+    },
+    setWallet(payload) {
+      sim.setWallet(payload);
+    },
+    clearWallet() {
+      sim.clearWallet();
+    },
+    reset() {
+      if (!isChain()) sim.reset();
+    },
+
+    summary(snapshot = state) {
+      const list = Object.values(snapshot.assessments || {});
+      return {
+        policies: Object.keys(snapshot.policies || {}).length,
+        total: list.length,
+        compliant: list.filter((a) => a.verdict === "COMPLIANT").length,
+        non_compliant: list.filter((a) => a.verdict === "NON_COMPLIANT").length,
+        review: list.filter((a) => a.verdict === "REVIEW").length,
+        high_risk: list.filter((a) => a.risk_band === "HIGH").length,
+      };
+    },
+
+    ledgerOk: (snapshot = state) =>
+      Number(snapshot.ledger?.total_deposited || 0) ===
+      Number(snapshot.ledger?.total_out || 0) + Number(snapshot.ledger?.locked_total || 0),
+
+    isEscrowExpired: (escrow) => Math.floor(Date.now() / 1000) >= Number(escrow.created_ts) + 30 * 86400,
+
+    async registerPolicy(payload) {
+      if (!isChain()) return sim.registerPolicy(payload);
+      await chainWrite("register_policy", [payload.policy_id, payload.name, payload.source_url, payload.guidance]);
+    },
+
+    async updatePolicy(payload) {
+      if (!isChain()) return sim.updatePolicy(payload);
+      await chainWrite("update_policy", [payload.policy_id, payload.name, payload.source_url, payload.guidance]);
+    },
+
+    async setPolicyActive(policyId, active) {
+      if (!isChain()) return sim.setPolicyActive(policyId, active);
+      await chainWrite("set_policy_active", [policyId, Boolean(active)]);
+    },
+
+    async transferOwnership(newOwner) {
+      if (!isChain()) return sim.transferOwnership(newOwner);
+      await chainWrite("transfer_ownership", [String(newOwner ?? "").trim()]);
+    },
+
+    async acceptOwnership() {
+      if (!isChain()) return sim.acceptOwnership();
+      await chainWrite("accept_ownership", []);
+    },
+
+    async assess(form) {
+      if (!isChain()) return sim.assess(form);
+      await chainWrite("assess", [
+        form.policy_id,
+        form.subject || "",
+        form.counterparty || "",
+        form.amount || "",
+        form.context || "",
+        form.submit_ref,
+      ]);
+      const me = String(sim.getState().wallet?.address || "").toLowerCase();
+      const matches = Object.values(state.assessments)
+        .filter((record) => String(record.submit_ref) === String(form.submit_ref) && String(record.requester).toLowerCase() === me)
+        .sort((a, b) => idNumber(b.assessment_id) - idNumber(a.assessment_id));
+      return matches[0] || null;
+    },
+
+    async createEscrow(form) {
+      if (!isChain()) return sim.createEscrow(form);
+      const wei = Math.max(0, Math.floor(Number(form.amount) || 0));
+      await chainWrite("create_escrow", [form.assessment_id, form.payee, form.reference || ""], wei);
+      const me = String(sim.getState().wallet?.address || "").toLowerCase();
+      const mine = Object.values(state.escrows)
+        .filter((escrow) => String(escrow.funder).toLowerCase() === me)
+        .sort((a, b) => idNumber(b.escrow_id) - idNumber(a.escrow_id));
+      return mine[0] || null;
+    },
+
+    async releaseEscrow(escrowId) {
+      if (!isChain()) return sim.releaseEscrow(escrowId);
+      await chainWrite("release_escrow", [escrowId]);
+    },
+
+    async refundEscrow(escrowId) {
+      if (!isChain()) return sim.refundEscrow(escrowId);
+      await chainWrite("refund_escrow", [escrowId]);
+    },
+  };
 }
 
 export function useContract(contract) {
