@@ -27,10 +27,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: gltest tests/integration/ -v -s --network studionet
+      - name: Pin the committed test keystores
+        run: python scripts/pin_test_accounts.py
         env:
-          # Optional: pin the signers by uncommenting the accounts block in
-          # gltest.config.yaml and adding these repository secrets.
-          CLAUSEGUARD_TEST_KEY: ${{ secrets.CLAUSEGUARD_TEST_KEY }}
-          CLAUSEGUARD_STRANGER_KEY: ${{ secrets.CLAUSEGUARD_STRANGER_KEY }}
-          CLAUSEGUARD_PAYEE_KEY: ${{ secrets.CLAUSEGUARD_PAYEE_KEY }}
+          # Optional: set these secrets to stop relying on the committed
+          # password files.
+          CLAUSEGUARD_TEST1_PASSWORD: ${{ secrets.CLAUSEGUARD_TEST1_PASSWORD }}
+          CLAUSEGUARD_TEST2_PASSWORD: ${{ secrets.CLAUSEGUARD_TEST2_PASSWORD }}
+      - run: gltest tests/integration/ -v -s --network studionet

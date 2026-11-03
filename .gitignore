@@ -21,3 +21,5 @@ private_key*
 *.pem
 *.key
 keystore*.json
+*-keystore.json
+*.password

@@ -161,12 +161,11 @@ as descriptive text that is never fed back into a decision.
 
 ## Integration on studionet
 
-`gltest` generates the accounts it uses — there is no wallet to connect and no
-private key to paste. `default_account` signs the deploy and the owner-only
-calls; `accounts[1]`, `accounts[2]` are further signers the framework creates
-for the adversarial cases. They are generated per run, so no real funds are
-involved. Only `testnet_bradbury` needs keys of your own, and those live in
-`gltest.config.yaml` under `accounts:` and are read from `.env`.
+`default_account` signs the deploy and the owner-only calls; `accounts[1]` plays
+the stranger in the adversarial cases. In CI those two signers are unlocked from
+`tests/tester1-keystore.json` and `tests/tester2-keystore.json` by
+`scripts/pin_test_accounts.py`, which rewrites `gltest.config.yaml` for the run —
+so the committed config stays env-free and direct-mode tests never need secrets.
 
 ```bash
 gltest tests/integration/ -v -s --network studionet
@@ -193,37 +192,42 @@ execution, and depends on live web and LLM behaviour.
 
 ## Addresses
 
-From the studionet run of commit `83a53da`:
+The contract address changes on every run, so the only address worth funding is
+the pinned test account:
 
 | Role | Address |
 |---|---|
-| ClauseGuard contract | `0xe0755aeb89aDC69d1D8C2773972680fCFF16bFE9` |
-| Deployment signer (owner) | `0x5AcF9e4Cc50fB72eb8DA201A72cA05a4F7e0A61e` |
+| Fundable test account (tester1, the signer) | `0xE8b3e800d08727D25156a44cD1609F793bd0Af5a` |
+| Stranger / second signer (tester2) | `0x0C0Fd005478Cef9219451BBD19Dfc6C0586fC1Ad` |
 | Escrow payee (constant in the suite) | `0xabababababababababababababababababababab` |
 
-**Read this before sending GEN.** Those addresses are from one run and are
-ephemeral: every studionet run generates fresh accounts and deploys a new
-contract, so GEN sent to them now sits under a key nobody holds and against a
-contract the next run will not touch. The payee address is a constant burn
-target — never fund it.
+Each run deploys a new contract, so a contract address from an earlier run is
+dead. The two accounts above stay the same because their keystores live in the
+repository (`tests/tester1-keystore.json`, `tests/tester2-keystore.json`).
 
 ### Funding the escrow for real
 
-To make "send GEN, watch it refund" meaningful, pin the signer:
+1. send GEN to the tester1 address above — a fraction of one GEN is plenty, the
+   escrow tests deposit 1000 wei;
+2. run the workflow (or `gltest tests/integration/ -v -s --network studionet`);
+3. CI rewrites `gltest.config.yaml` from the keystores, so `default_account` is
+   tester1 and `accounts[1]` is tester2 — the same addresses on every run;
+4. `create_escrow` then moves real value out of tester1, and the run finishes
+   with `release_escrow` or `refund_escrow`, so the balance comes back or goes
+   to the payee. `get_balance()` and `get_ledger()` show both sides.
 
-1. create three throwaway keys (`genlayer account create`, or any wallet) —
-   never a wallet you care about;
-2. add them as repository secrets named `CLAUSEGUARD_TEST_KEY`,
-   `CLAUSEGUARD_STRANGER_KEY`, `CLAUSEGUARD_PAYEE_KEY`;
-3. uncomment the `accounts:` block in `gltest.config.yaml`;
-4. fund the `CLAUSEGUARD_TEST_KEY` address, then run the workflow.
-   `default_account` is now a fixed address, so the balance survives between
-   runs and `create_escrow` / `refund_escrow` move real value.
+**Rotate these keys.** The keystore passwords (`tests/tester1.password`,
+`tests/tester2.password`) are committed, which makes the keys effectively public
+to anyone who can read this repository, history included. They are acceptable as
+throwaway studionet accounts holding dust; do not reuse them anywhere else. To
+stop relying on the committed passwords, set `CLAUSEGUARD_TEST1_PASSWORD` and
+`CLAUSEGUARD_TEST2_PASSWORD` as repository secrets — the pin script prefers them
+— and then delete the `.password` files.
 
 Studionet's faucet is the droplet in the Studio account selector and funds the
-Studio account, not an arbitrary address. For "send GEN to this address and
-watch it move", Bradbury is the practical network: its faucet accepts an
-address, and the same suite runs with `--network testnet_bradbury`.
+Studio account, not an arbitrary address. If tester1 is not a Studio account you
+control, send GEN from a wallet, or use Bradbury
+(`--network testnet_bradbury`) whose faucet accepts any address.
 
 ## Seeing transactions in the explorer
 
