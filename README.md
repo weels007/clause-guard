@@ -93,8 +93,9 @@ verdict is `COMPLIANT`:
 
 - the deposit is recorded against `gl.message.sender_address` as `funder`;
 - the assessment is marked used, so one verdict can never back two escrows;
-- a bare transfer to the contract reverts in `__receive__`, so GEN can never sit
-  here without an owner able to withdraw it;
+- `create_escrow` is the only payable entry point, so value can only arrive
+  attached to a recorded funder — there is no bare-transfer path into the
+  contract and therefore no ownerless GEN;
 - a payable call never reverts once value is attached: if the target is refused
   (wrong verdict, someone else's assessment, recycled verdict, invalid or zero
   payee), the deposit is stored as an `ORPHAN` escrow owned by the sender and
@@ -144,10 +145,11 @@ is only used as that second net.
   funder always, and anyone after the 30-day timeout, but the payout target is
   always the stored funder, so no third party can redirect it.
   `create_escrow` rejects a payee that is the funder or the zero address.
-- **No orphaned funds** — `__receive__` reverts, so value can only enter through
-  a call that records a funder, and a refused deposit becomes a refundable
-  `ORPHAN` instead of being stranded by a revert. The ledger invariant
-  `total_deposited == total_out + locked_total` holds after every state change.
+- **No orphaned funds** — `create_escrow` is the only payable entry point, so
+  value can only enter through a call that records a funder, and a refused
+  deposit becomes a refundable `ORPHAN` instead of being stranded by a revert.
+  The ledger invariant `total_deposited == total_out + locked_total` holds
+  after every state change.
 - **Citations survive formatting** — `rule_quote` is matched after folding both
   sides to letters and digits, so punctuation, casing or line wrapping cannot
   make a genuine citation fail or let a fake one pass.

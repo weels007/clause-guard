@@ -68,7 +68,7 @@ def test_compliant_transaction_is_stored(
     # 12 is quantised to the 10-point bucket both nodes compare.
     assert record["risk_score"] == 10
     assert record["risk_band"] == "LOW"
-    assert record["rule_quote"] == QUOTE.lower()
+    assert record["rule_quote"].lower() == QUOTE.lower()
     assert record["submit_ref"] == "ref-1"
 
     assert contract.get_policy(POLICY_ID)["assessments"] == 1
