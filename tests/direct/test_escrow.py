@@ -74,12 +74,31 @@ def test_create_escrow_records_the_deposit(
     assert escrow["amount"] == 1000
     assert escrow["status"] == "FUNDED"
     assert escrow["assessment_id"] == assessment_id
-    assert escrow["payee"] == direct_alice.hex()
+    assert escrow["payee"].lower().replace("0x", "") == direct_alice.hex().lower().replace("0x", "")
 
     ledger = contract.get_ledger()
     assert ledger["total_deposited"] == 1000
     assert ledger["locked_total"] == 1000
     assert ledger["total_out"] == 0
+
+
+def test_get_escrows_lists_the_deposit(
+    direct_vm, direct_deploy, direct_owner, direct_alice
+):
+    contract, assessment_id = _compliant_assessment(
+        direct_vm, direct_deploy, direct_owner
+    )
+
+    direct_vm.value = 1000
+    escrow_id = contract.create_escrow(assessment_id, direct_alice, "PO-1")
+    direct_vm.value = 0
+
+    escrows = contract.get_escrows()
+    assert list(escrows) == [escrow_id]
+    assert escrows[escrow_id]["amount"] == 1000
+    assert escrows[escrow_id]["status"] == "FUNDED"
+    assert escrows[escrow_id]["assessment_id"] == assessment_id
+    assert int(contract.get_balance()) >= 0
 
 
 def test_zero_deposit_is_rejected(
@@ -187,7 +206,7 @@ def test_zero_address_payee_is_orphaned(
 
     escrow = contract.get_escrow(escrow_id)
     assert escrow["status"] == "ORPHAN"
-    assert escrow["payee"] == "0" * 40
+    assert escrow["payee"] == "0x" + "0" * 40
 
 
 def test_unparseable_payee_is_orphaned_and_cannot_revert_the_deposit(

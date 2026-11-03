@@ -197,6 +197,11 @@ def _addr_eq(a, b) -> bool:
     return _addr_hex(a) == _addr_hex(b)
 
 
+def _addr_text(addr) -> str:
+    """0x-prefixed form for JSON views; clients parse addresses this way."""
+    return "0x" + _addr_hex(addr)
+
+
 def _coerce_addr(value):
     """Accept an Address, raw bytes, or a hex string (clients send strings)."""
     if hasattr(value, "as_bytes"):
@@ -437,7 +442,7 @@ def _policy_to_dict(policy_id: str, policy) -> dict:
         "active": policy.active,
         "assessments": policy.assessments,
         "version": policy.version,
-        "creator": _addr_hex(policy.creator),
+        "creator": _addr_text(policy.creator),
         "fee_paid": int(policy.fee_paid),
     }
 
@@ -1005,8 +1010,8 @@ Decision rules:
         escrow = self.escrows[escrow_id]
         return {
             "escrow_id": escrow.escrow_id,
-            "funder": _addr_hex(escrow.funder),
-            "payee": _addr_hex(escrow.payee),
+            "funder": _addr_text(escrow.funder),
+            "payee": _addr_text(escrow.payee),
             "amount": int(escrow.amount),
             "assessment_id": escrow.assessment_id,
             "reference": escrow.reference,
@@ -1029,8 +1034,8 @@ Decision rules:
         return {
             key: {
                 "escrow_id": escrow.escrow_id,
-                "funder": _addr_hex(escrow.funder),
-                "payee": _addr_hex(escrow.payee),
+                "funder": _addr_text(escrow.funder),
+                "payee": _addr_text(escrow.payee),
                 "amount": int(escrow.amount),
                 "assessment_id": escrow.assessment_id,
                 "reference": escrow.reference,

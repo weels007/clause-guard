@@ -122,6 +122,39 @@ def test_non_owner_registers_by_paying_the_fee(
     assert contract.get_policy_fee()["pending"] == POLICY_FEE_WEI
 
 
+def test_creator_can_update_their_paid_policy(
+    direct_vm, direct_deploy, direct_alice
+):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = POLICY_FEE_WEI
+    contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
+    direct_vm.value = 0
+
+    contract.update_policy(POLICY_ID, "Alice rules", RULES_URL, "Updated guidance.")
+
+    policy = contract.get_policy(POLICY_ID)
+    assert policy["name"] == "Alice rules"
+    assert policy["guidance"] == "Updated guidance."
+    assert policy["version"] == 2
+
+
+def test_stranger_cannot_update_someone_elses_policy(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = POLICY_FEE_WEI
+    contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
+    direct_vm.value = 0
+
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
+        contract.update_policy(POLICY_ID, "Hijacked", RULES_URL, GUIDANCE)
+
+
 def test_fee_can_be_overpaid_and_the_owner_withdraws_it(
     direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob
 ):
