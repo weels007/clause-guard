@@ -14,10 +14,17 @@ function NetworkPanel({ contract, state }) {
 
   const deploy = async () => {
     if (deploying) return;
+    const ok = window.confirm(
+      "Deploy a NEW ClauseGuard contract?\n\n" +
+        "This sends a deploy transaction that creates a fresh contract at a new address, with empty policies, assessments and escrows. " +
+        "Your wallet pays the fees and will ask you to sign.\n\n" +
+        "If a ClauseGuard contract already exists, cancel and paste its address instead."
+    );
+    if (!ok) return;
     setDeploying(true);
     try {
       const address = await contract.deploy();
-      toast("ok", "Contract deployed", `${shortAddress(address)} · GenLayer Studio.`);
+      toast("ok", "Contract deployed", `${shortAddress(address)} · saved as the address this console reads from.`);
     } catch (error) {
       toast("error", "Deploy failed", humanizeError(error));
     } finally {
@@ -93,8 +100,9 @@ function NetworkPanel({ contract, state }) {
       ) : (
         <>
           <p className="hint" style={{ marginTop: 0 }}>
-            This is the simulated contract. Connect a wallet on GenLayer Studio and deploy the bundled ClauseGuard source, or paste an
-            existing address — every read and write then goes to the chain.
+            This view is the simulated contract. <b>Deploying creates a brand-new contract</b> — a new address with no policies,
+            assessments or escrows — so it is done once per contract. If a ClauseGuard contract already exists, paste its address
+            below instead; every read and write then goes to that same contract for everyone.
           </p>
           <div className="field-row" style={{ marginTop: 12 }}>
             <label className="field">
@@ -107,7 +115,7 @@ function NetworkPanel({ contract, state }) {
               </button>
               <button className="btn btn-primary" type="button" onClick={deploy} disabled={!connected || deploying}>
                 {deploying ? <span className="spin" /> : null}
-                {deploying ? "Deploying…" : "Deploy"}
+                {deploying ? "Deploying…" : "Deploy new contract"}
               </button>
             </div>
           </div>

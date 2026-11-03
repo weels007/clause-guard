@@ -333,7 +333,9 @@ with the same friendly copy the simulator uses.
 The **Contract** panel on the Dashboard is the switch: with a wallet connected it
 deploys the bundled `contracts/ClauseGuard.py` (imported with Vite's `?raw`, so
 the console always ships the same source the tests run against) or accepts an
-existing address. The address is remembered in `localStorage`, reads refresh on
+existing address. Deploying is a one-off: it creates a **new** contract at a new
+address with empty state and costs fees, so an existing deployment should be
+pasted in instead. The address is remembered in `localStorage`, reads refresh on
 load and after every write, and the Assess result adds the on-chain receipt —
 status, execution result, leader vote, validator count and rounds — next to the
 agreement the contract stored. The header badge says `on-chain` or `simulation`.
