@@ -420,6 +420,23 @@ runs itself on any push that touches `contracts/`, `tests/integration/` or
 `scripts/`, and by hand from the Actions tab; only true multi-validator behaviour
 needs the real network.
 
+## Deploying the console to Vercel
+
+The console is a plain Vite SPA, so Vercel can build it — but only if Vercel looks
+inside `frontend/`, because the repository root holds the Python contract and the
+Dockerfile (which is for FreeMilk's preview / Cloud Run, not for Vercel).
+
+1. Import the repository at vercel.com.
+2. Set **Root Directory** to `frontend`.
+3. Framework preset: **Vite** (detected from `frontend/package.json`); build
+   command `npm run build`, output `dist`.
+4. No environment variables are needed: the contract address the console talks to
+   ships in `frontend/src/config.js`.
+
+Routing works without rewrites because the console uses hash routes
+(`#/assess`), so every page is served from `/`. `frontend/vercel.json` pins the
+framework, build command and output directory.
+
 ## Extending it
 
 - **Real rule sources** — point a policy at a public sanctions list, a regulator's
