@@ -73,19 +73,33 @@ function hash(text) {
   return Math.abs(h);
 }
 
-function pickQuote(rules, keywords) {
-  const sentences = String(rules || "").match(/[^.!?]+[.!?]*/g) || [];
-  const cleaned = sentences.map((sentence) => sentence.trim()).filter(Boolean);
-  if (!cleaned.length) return "";
+/** Pick a whole, long enough sentence that supports the verdict.
+ *
+ * Splitting on punctuation produces fragments like "Article 4." — a quote that
+ * cannot be grounded and would downgrade every assessment to REVIEW. Keep only
+ * sentences long enough to be evidence, prefer word overlap with the
+ * transaction, and prefer wording that matches the verdict's polarity. */
+function pickQuote(rules, keywords, verdict) {
+  const candidates = (String(rules || "").match(/[^.!?]+[.!?]*/g) || [])
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.replace(/[^a-z0-9]/gi, "").length >= 20);
+  if (!candidates.length) return "";
+
   const lowered = keywords.toLowerCase();
-  const matching = cleaned.find((sentence) =>
-    sentence
+  const restrictive = /prohibit|refused|must not|denied|not allowed/i;
+
+  const scored = candidates.map((sentence) => {
+    const hits = sentence
       .toLowerCase()
       .split(/\W+/)
       .filter((word) => word.length > 4)
-      .some((word) => lowered.includes(word))
-  );
-  return (matching || cleaned[0]).slice(0, 240);
+      .filter((word) => lowered.includes(word)).length;
+    const polarity =
+      verdict === "COMPLIANT" ? (restrictive.test(sentence) ? 0 : 1) : verdict === "NON_COMPLIANT" ? (restrictive.test(sentence) ? 1 : 0) : 0;
+    return { sentence, score: hits * 2 + polarity };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].sentence.slice(0, 240);
 }
 
 /** A deterministic stand-in for the committee: same inputs, same verdict. */
@@ -106,7 +120,7 @@ function decide(policy, form) {
 
   const level = verdict === "COMPLIANT" ? (roll % 2 === 0 ? "LOW" : "MEDIUM") : verdict === "NON_COMPLIANT" ? "HIGH" : "MEDIUM";
 
-  const quote = pickQuote(rules, haystack);
+  const quote = pickQuote(rules, haystack, verdict);
   const quoteFolded = quote.toLowerCase().replace(/[^a-z0-9]/g, "");
   const rulesFolded = rules.toLowerCase().replace(/[^a-z0-9]/g, "");
   const grounded = quoteFolded.length >= 20 && rulesFolded.includes(quoteFolded);
