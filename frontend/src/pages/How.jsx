@@ -58,6 +58,21 @@ export default function How() {
       </section>
 
       <section className="panel">
+        <h2>On-chain, not mocked</h2>
+        <p>
+          The console talks to GenLayer Studio through <code>genlayer-js</code>. Reads use a wallet-less client; writes and the
+          deploy are signed by your EVM wallet. A write is only shown as done once the committee has decided and the execution
+          returned a value — a transaction that reverts is reported with the contract's own error tag, and an undetermined one
+          says so instead of silently keeping stale numbers.
+        </p>
+        <p>
+          The Dashboard's <b>Contract</b> panel deploys the bundled <code>contracts/ClauseGuard.py</code> or takes an existing
+          address. Without an address the header badge reads <b>simulation</b> and the same screens run against a deterministic
+          stand-in with identical guards.
+        </p>
+      </section>
+
+      <section className="panel">
         <h2>Money rules</h2>
         <ul className="checks">
           <li>An escrow needs a COMPLIANT assessment the funder ran themselves — one verdict backs one escrow.</li>
