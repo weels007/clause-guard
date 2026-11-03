@@ -503,3 +503,33 @@ def test_19_owner_deactivates_and_reactivates(client, account, contract):
 
     _expect_ok(client, account, contract, "set_policy_active", ["us-ofac", True])
     assert _read(client, contract, "get_policy", ["us-ofac"])["active"] is True
+
+
+def test_20_private_host_is_refused(client, account, contract):
+    _expect_denied(
+        client,
+        account,
+        contract,
+        "register_policy",
+        ["ssrf", "Bad host", "https://localhost/rules", "guidance"],
+    )
+
+
+def test_21_ownership_moves_only_when_the_nominee_accepts(
+    client, account, stranger, contract
+):
+    # A non-owner cannot nominate anyone.
+    _expect_denied(
+        client, stranger, contract, "transfer_ownership", [stranger.address]
+    )
+
+    _expect_ok(client, account, contract, "transfer_ownership", [stranger.address])
+    _expect_ok(client, stranger, contract, "accept_ownership")
+
+    assert _read(client, contract, "get_owner").lower() == stranger.address.lower()
+    assert _read(client, contract, "get_pending_owner") == "0x" + "0" * 40
+
+    # The previous owner is out.
+    _expect_denied(
+        client, account, contract, "set_policy_active", ["us-ofac", False]
+    )

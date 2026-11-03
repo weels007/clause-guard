@@ -162,3 +162,105 @@ def test_owner_is_recorded(direct_vm, direct_deploy):
     owner = contract.get_owner()
     assert owner.startswith("0x")
     assert len(owner) == 42
+
+
+
+def test_private_hosts_are_refused(direct_vm, direct_deploy, direct_owner):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+    direct_vm.sender = direct_owner
+
+    for url in (
+        "https://127.0.0.1/rules",
+        "https://localhost/rules",
+        "https://metadata.google.internal/rules",
+        "https://intranet.local/rules",
+    ):
+        with direct_vm.expect_revert("[EXPECTED]:invalid_source_url"):
+            contract.register_policy(POLICY_ID, "screen", url, GUIDANCE)
+
+
+def test_assessment_records_the_rules_digest(
+    direct_vm, direct_deploy, direct_owner
+):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+    direct_vm.sender = direct_owner
+    contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
+
+    direct_vm.mock_web(
+        r".*rules\.example\.com.*",
+        {"status": 200, "body": "Article 4: sanctioned transfers are prohibited."},
+    )
+    direct_vm.mock_llm(
+        r".*\[\[COMPLIANCE_ASSESSMENT\]\].*",
+        json.dumps(
+            {
+                "verdict": "COMPLIANT",
+                "risk_level": "LOW",
+                "rule_quote": QUOTE,
+                "findings": "article 4",
+            }
+        ),
+    )
+
+    assessment_id = contract.assess(
+        POLICY_ID, "A", "B", "100 EUR", "context", "ref-1"
+    )
+
+    digest = contract.get_assessment(assessment_id)["rules_digest"]
+    assert len(digest) == 64
+    assert all(character in "0123456789abcdef" for character in digest)
+
+
+def test_only_the_owner_may_nominate_a_successor(
+    direct_vm, direct_deploy, direct_alice
+):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+    direct_vm.sender = direct_alice
+
+    with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
+        contract.transfer_ownership("0x" + "11" * 20)
+
+
+def test_ownership_needs_the_successor_to_accept(
+    direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob
+):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+
+    direct_vm.sender = direct_owner
+    contract.transfer_ownership(direct_alice)
+
+    # Only the nominated address can accept.
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("[EXPECTED]:not_pending_owner"):
+        contract.accept_ownership()
+
+    direct_vm.sender = direct_alice
+    contract.accept_ownership()
+    # The nominee is in charge now, and the nomination is cleared.
+    contract.register_policy("alice-policy", "Alice screen", RULES_URL, GUIDANCE)
+    assert contract.get_pending_owner() == "0x" + "0" * 40
+
+    # The old owner and a third party are both out.
+    direct_vm.sender = direct_owner
+    with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
+        contract.set_policy_active(POLICY_ID, False)
+
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
+        contract.set_policy_active(POLICY_ID, False)
+
+
+def test_zero_owner_is_refused(direct_vm, direct_deploy, direct_owner):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+    direct_vm.sender = direct_owner
+
+    with direct_vm.expect_revert("[EXPECTED]:zero_owner"):
+        contract.transfer_ownership("0x" + "0" * 40)
+
+
+def test_accept_without_a_nomination_reverts(direct_vm, direct_deploy, direct_owner):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+    direct_vm.sender = direct_owner
+
+    with direct_vm.expect_revert("[EXPECTED]:no_pending_owner"):
+        contract.accept_ownership()

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from genlayer import *
+from genlayer.py.keccak import Keccak256
 
 # Stable marker embedded in every rule-evaluation prompt.
 # Tests use it to match LLM mocks without depending on prompt wording.
@@ -56,6 +57,13 @@ ESCROW_TIMEOUT_SECONDS = 30 * 86400
 
 ZERO_HEX = "0" * 40
 
+# Hosts a validator must never be pointed at: the node resolves the name itself,
+# so a source URL on a private network would let the owner use the committee as
+# an SSRF probe. Legitimate rule pages live on public domains, so blocking
+# these costs nothing.
+BLOCKED_HOST_SUFFIXES = (".local", ".internal", ".localhost", ".nip.io", ".sslip.io")
+BLOCKED_HOST_KEYWORDS = ("localhost", "metadata.google")
+
 # Stored risk is a coarse level, not a model-generated number. Two independent
 # LLM runs rarely agree on the same integer but reliably agree on a bucket, and
 # the equivalence-principle docs recommend comparing only the decision fields.
@@ -90,6 +98,7 @@ class Assessment:
     risk_score: u32
     risk_band: str
     rule_quote: str
+    rules_digest: str
     findings: str
     submit_ref: str
     requester: Address
@@ -128,6 +137,39 @@ def _escrow_expired(escrow) -> bool:
     if created <= 0:
         return False
     return _now_ts() >= created + ESCROW_TIMEOUT_SECONDS
+
+
+def _host_of(url: str) -> str:
+    rest = url.split("://", 1)[-1]
+    host = rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    host = host.split("@")[-1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    return host.lower().rstrip(".")
+
+
+def _source_url_allowed(url: str) -> bool:
+    """https, a real hostname, and not a private or metadata address."""
+    if not url.startswith("https://"):
+        return False
+    host = _host_of(url)
+    if not host:
+        return False
+    if any(keyword in host for keyword in BLOCKED_HOST_KEYWORDS):
+        return False
+    if any(host.endswith(suffix) for suffix in BLOCKED_HOST_SUFFIXES):
+        return False
+    # No IP literals: the validator's HTTP client does its own DNS resolution,
+    # so a literal would bypass the host checks above.
+    parts = host.split(".")
+    if len(parts) == 4 and all(part.isdigit() for part in parts):
+        return False
+    return True
+
+
+def _digest_text(text: str) -> str:
+    """Keccak digest of the rules excerpt the leader actually read."""
+    return Keccak256(text.encode("utf-8")).digest().hex()
 
 
 def _addr_hex(addr) -> str:
@@ -322,6 +364,7 @@ def _build_verdict(raw, rules_text: str) -> dict:
         "verdict": decision,
         "risk_level": level,
         "rule_quote": quote,
+        "rules_digest": _digest_text(rules_excerpt),
         "findings": findings,
     }
 
@@ -402,6 +445,7 @@ def _assessment_to_dict(assessment_id: str, assessment) -> dict:
         "risk_score": assessment.risk_score,
         "risk_band": assessment.risk_band,
         "rule_quote": assessment.rule_quote,
+        "rules_digest": assessment.rules_digest,
         "findings": assessment.findings,
         "submit_ref": assessment.submit_ref,
         "requester": assessment.requester.as_hex,
@@ -411,6 +455,7 @@ def _assessment_to_dict(assessment_id: str, assessment) -> dict:
 
 class ClauseGuard(gl.Contract):
     owner: Address
+    pending_owner: Address
     policies: TreeMap[str, Policy]
     assessments: TreeMap[str, Assessment]
     assessment_ids: DynArray[str]
@@ -471,7 +516,7 @@ class ClauseGuard(gl.Contract):
             raise gl.vm.UserError(ERROR_EXPECTED + ":empty_name")
 
         clean_url = source_url.strip()
-        if not clean_url.startswith("https://"):
+        if not _source_url_allowed(clean_url):
             raise gl.vm.UserError(ERROR_EXPECTED + ":invalid_source_url")
         if len(clean_url) > MAX_SOURCE_URL_CHARS:
             raise gl.vm.UserError(ERROR_EXPECTED + ":source_url_too_long")
@@ -510,7 +555,7 @@ class ClauseGuard(gl.Contract):
             raise gl.vm.UserError(ERROR_EXPECTED + ":empty_name")
 
         clean_url = source_url.strip()
-        if not clean_url.startswith("https://"):
+        if not _source_url_allowed(clean_url):
             raise gl.vm.UserError(ERROR_EXPECTED + ":invalid_source_url")
         if len(clean_url) > MAX_SOURCE_URL_CHARS:
             raise gl.vm.UserError(ERROR_EXPECTED + ":source_url_too_long")
@@ -533,6 +578,28 @@ class ClauseGuard(gl.Contract):
             raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_policy")
 
         self.policies[normalized].active = active
+
+    @gl.public.write
+    def transfer_ownership(self, new_owner: Address) -> None:
+        """Nominate a successor. They must accept, so a typo cannot lose control."""
+        self._require_owner()
+
+        candidate = _coerce_addr(new_owner)
+        if _addr_hex(candidate) == ZERO_HEX:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":zero_owner")
+
+        self.pending_owner = candidate
+
+    @gl.public.write
+    def accept_ownership(self) -> None:
+        pending = self.pending_owner
+        if _addr_hex(pending) == ZERO_HEX:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":no_pending_owner")
+        if not _addr_eq(pending, gl.message.sender_address):
+            raise gl.vm.UserError(ERROR_EXPECTED + ":not_pending_owner")
+
+        self.owner = gl.message.sender_address
+        self.pending_owner = Address("0x" + ZERO_HEX)
 
     # ------------------------------------------------------------------
     # assessment
@@ -688,6 +755,7 @@ Decision rules:
             risk_score=u32(score),
             risk_band=band,
             rule_quote=str(verdict.get("rule_quote", "")),
+            rules_digest=str(verdict.get("rules_digest", "")),
             findings=str(verdict.get("findings", "")),
             submit_ref=clean_ref,
             requester=requester,
@@ -854,6 +922,10 @@ Decision rules:
     @gl.public.view
     def get_owner(self) -> str:
         return self.owner.as_hex
+
+    @gl.public.view
+    def get_pending_owner(self) -> str:
+        return self.pending_owner.as_hex
 
     @gl.public.view
     def get_policy(self, policy_id: str) -> dict:

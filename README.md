@@ -63,6 +63,8 @@ on differing stack detail.
 | `register_policy(policy_id, name, source_url, guidance)` | owner | Add a rules-backed policy |
 | `update_policy(policy_id, name, source_url, guidance)` | owner | Change a policy that has no assessments yet |
 | `set_policy_active(policy_id, active)` | owner | Enable/disable a policy |
+| `transfer_ownership(new_owner)` | owner | Nominate a successor |
+| `accept_ownership()` | the nominee | Take over; a typo cannot lose control |
 | `assess(policy_id, subject, counterparty, amount, context, submit_ref)` | anyone | Run the assessment, returns assessment id (`ca-1`, `ca-2`, …) |
 | `create_escrow(assessment_id, payee, reference)` (payable) | anyone with their own COMPLIANT assessment | Deposit GEN against that verdict |
 | `release_escrow(escrow_id)` | the escrow's funder only | Pay the payee |
@@ -73,9 +75,10 @@ on differing stack detail.
 | Method | Returns |
 |---|---|
 | `get_owner()` | owner address |
+| `get_pending_owner()` | nominated successor, zero when none |
 | `get_policy(policy_id)` | policy record (name, source, guidance, active, count, version) |
 | `get_policies()` | all policies keyed by id |
-| `get_assessment(assessment_id)` | one assessment incl. verified `rule_quote` and `submit_ref` |
+| `get_assessment(assessment_id)` | one assessment incl. verified `rule_quote`, `rules_digest` and `submit_ref` |
 | `get_assessments()` | all assessments keyed by id |
 | `get_assessment_ids()` | `{"ids": [...]}` in insertion order |
 | `get_escrow(escrow_id)` | funder, payee, amount, status, bound assessment, created_ts |
@@ -156,10 +159,20 @@ is only used as that second net.
 - **Citations survive formatting** — `rule_quote` is matched after folding both
   sides to letters and digits, so punctuation, casing or line wrapping cannot
   make a genuine citation fail or let a fake one pass.
+- **Rules digest** — each assessment stores the keccak digest of the excerpt the
+  leader actually read, so an auditor can tell which text produced the verdict
+  even after the source page changes. It is descriptive: validators do not
+  compare it, because a live page can differ slightly between two fetches.
+- **No SSRF probe** — a source URL must be `https`, must have a real hostname,
+  and may not be an IP literal, `localhost`, a `*.local` / `*.internal` host or
+  a cloud metadata name. The node resolves the name itself, so without this the
+  owner could point the committee at a private network.
+- **Two-step ownership** — the owner nominates a successor and that address must
+  accept, so a mistyped address cannot freeze policy registration.
 
-Known limits: there is no ownership transfer yet, so a lost owner key freezes
-policy registration (existing assessments keep working), and `findings` is stored
-as descriptive text that is never fed back into a decision.
+Known limits: `findings` is stored as descriptive text that is never fed back
+into a decision, and a source page that changes between the leader's fetch and a
+validator's is only visible through the stored digest, not enforced.
 
 ## Integration on studionet
 
