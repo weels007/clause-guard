@@ -1,18 +1,12 @@
-/** Simulated ClauseGuard contract.
+/** Simulated ClauseGuard contract, ported from the vanilla console.
  *
- * This mirrors contracts/ClauseGuard.py: the same guards, the same statuses,
- * the same ledger invariant, the same duplicate-submit rule. It is a stand-in so
- * every flow in the console works offline and deterministically; swapping this
- * module for a genlayer_py/genlayer-js client is the only change a live wiring
- * would need.
+ * Mirrors contracts/ClauseGuard.py: the same guards, statuses, ledger
+ * invariant and duplicate-submit rule, so every flow works offline and
+ * deterministically. Swapping this module for a genlayer-js client is the only
+ * change a live wiring needs.
  */
-import {
-  DEMO_ASSESSMENTS,
-  DEMO_ESCROWS,
-  DEMO_POLICIES,
-  OWNER_ADDRESS,
-  STRANGER_ADDRESS,
-} from "./data.js";
+import { useSyncExternalStore } from "react";
+import { DEMO_ASSESSMENTS, DEMO_ESCROWS, DEMO_POLICIES, OWNER_ADDRESS, STRANGER_ADDRESS } from "./data.js";
 
 export class ContractError extends Error {
   constructor(code, message) {
@@ -21,10 +15,45 @@ export class ContractError extends Error {
   }
 }
 
-const STORAGE_KEY = "clauseguard.sim.v1";
+const STORAGE_KEY = "clauseguard.sim.v2";
 const ZERO = "0x" + "0".repeat(40);
 const BAND_SCORE = { LOW: 20, MEDIUM: 50, HIGH: 80 };
 const POLICY_ID_ALPHABET = /^[a-z0-9._-]+$/;
+
+const ERROR_TEXT = {
+  unauthorized: "Only the contract owner can do that.",
+  policy_exists: "That policy id is already registered.",
+  policy_limit: "The contract has reached its policy limit.",
+  empty_policy_id: "A policy id is required.",
+  invalid_policy_id: "Use lowercase letters, digits and - _ . only.",
+  policy_id_too_long: "That policy id is too long.",
+  empty_name: "A name is required.",
+  empty_guidance: "Analyst guidance is required.",
+  invalid_source_url: "The rules URL must be https on a public hostname.",
+  source_url_too_long: "That URL is too long.",
+  unknown_policy: "That policy does not exist.",
+  policy_inactive: "That policy is disabled.",
+  policy_locked: "This policy already produced assessments, so it is locked. Register a new one.",
+  missing_subject: "A subject is required.",
+  missing_submit_ref: "A submit reference is required.",
+  duplicate_submit: "That reference was already used by this caller. Regenerate it.",
+  assessment_limit: "The contract has reached its assessment limit.",
+  zero_deposit: "A deposit must be positive.",
+  unknown_escrow: "That escrow does not exist.",
+  escrow_closed: "That escrow is already settled.",
+  not_funder: "Only the funder can move this escrow.",
+  zero_owner: "The zero address cannot own the contract.",
+  no_pending_owner: "Nobody has been nominated to take over.",
+  not_pending_owner: "Only the nominated address can accept.",
+  invalid_address: "That is not a valid address.",
+};
+
+export function humanizeError(error) {
+  if (!error) return "Something went wrong.";
+  const code = String(error.code || "").replace(/^\[[A-Z_]+\]:/, "");
+  if (ERROR_TEXT[code]) return ERROR_TEXT[code];
+  return error.message || "Something went wrong.";
+}
 
 function sanitize(value, limit) {
   return String(value ?? "")
@@ -76,9 +105,8 @@ function hash(text) {
 /** Pick a whole, long enough sentence that supports the verdict.
  *
  * Splitting on punctuation produces fragments like "Article 4." — a quote that
- * cannot be grounded and would downgrade every assessment to REVIEW. Keep only
- * sentences long enough to be evidence, prefer word overlap with the
- * transaction, and prefer wording that matches the verdict's polarity. */
+ * cannot be grounded and would downgrade every assessment to REVIEW.
+ */
 function pickQuote(rules, keywords, verdict) {
   const candidates = (String(rules || "").match(/[^.!?]+[.!?]*/g) || [])
     .map((sentence) => sentence.trim())
@@ -95,7 +123,15 @@ function pickQuote(rules, keywords, verdict) {
       .filter((word) => word.length > 4)
       .filter((word) => lowered.includes(word)).length;
     const polarity =
-      verdict === "COMPLIANT" ? (restrictive.test(sentence) ? 0 : 1) : verdict === "NON_COMPLIANT" ? (restrictive.test(sentence) ? 1 : 0) : 0;
+      verdict === "COMPLIANT"
+        ? restrictive.test(sentence)
+          ? 0
+          : 1
+        : verdict === "NON_COMPLIANT"
+          ? restrictive.test(sentence)
+            ? 1
+            : 0
+          : 0;
     return { sentence, score: hits * 2 + polarity };
   });
   scored.sort((a, b) => b.score - a.score);
@@ -106,8 +142,7 @@ function pickQuote(rules, keywords, verdict) {
 function decide(policy, form) {
   const rules = policy.rules || "";
   const haystack = `${form.subject} ${form.counterparty} ${form.amount} ${form.context}`.toLowerCase();
-  const serialised = `${policy.policy_id}|${haystack}`;
-  const roll = hash(serialised) % 100;
+  const roll = hash(`${policy.policy_id}|${haystack}`) % 100;
 
   const sanctions = /sanction|ofac|blocked|denied/.test(haystack);
   const prohibitedRules = /prohibit|prohibited|refused|must be refused/.test(rules);
@@ -118,20 +153,20 @@ function decide(policy, form) {
   else if (roll < 84) verdict = "REVIEW";
   else verdict = "NON_COMPLIANT";
 
-  const level = verdict === "COMPLIANT" ? (roll % 2 === 0 ? "LOW" : "MEDIUM") : verdict === "NON_COMPLIANT" ? "HIGH" : "MEDIUM";
+  const level =
+    verdict === "COMPLIANT" ? (roll % 2 === 0 ? "LOW" : "MEDIUM") : verdict === "NON_COMPLIANT" ? "HIGH" : "MEDIUM";
 
   const quote = pickQuote(rules, haystack, verdict);
   const quoteFolded = quote.toLowerCase().replace(/[^a-z0-9]/g, "");
   const rulesFolded = rules.toLowerCase().replace(/[^a-z0-9]/g, "");
   const grounded = quoteFolded.length >= 20 && rulesFolded.includes(quoteFolded);
 
-  const rotations = grounded ? (roll % 3) : 1;
   return {
     verdict: grounded ? verdict : "REVIEW",
     risk_level: grounded ? level : "MEDIUM",
     rule_quote: grounded ? quote : "",
     grounded,
-    rotations,
+    rotations: grounded ? roll % 3 : 1,
   };
 }
 
@@ -193,7 +228,7 @@ function load() {
   }
 }
 
-export function createStore() {
+export function createContract() {
   let state = load();
   const listeners = new Set();
 
@@ -203,35 +238,34 @@ export function createStore() {
     } catch {
       /* storage can be blocked; the app still works for this session */
     }
-    for (const listener of listeners) listener(state);
+    for (const listener of listeners) listener();
   };
 
   /** The signer: a connected wallet wins over the demo owner/stranger toggle. */
   const actorAddress = () =>
     state.wallet?.address || (state.actor === "stranger" ? STRANGER_ADDRESS : state.owner);
 
+  const requireOwner = () => {
+    if (actorAddress().toLowerCase() !== state.owner.toLowerCase())
+      throw new ContractError("[EXPECTED]:unauthorized", "Only the contract owner can do that.");
+  };
+
   const api = {
-    get state() {
-      return state;
-    },
+    getState: () => state,
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     actorAddress,
-    actorLabel() {
-      if (state.wallet?.address) return state.wallet.name || "wallet";
-      return state.actor === "stranger" ? "stranger" : "owner";
-    },
-    isOwner() {
-      return actorAddress().toLowerCase() === state.owner.toLowerCase();
-    },
+    isOwner: () => actorAddress().toLowerCase() === state.owner.toLowerCase(),
+
     setActor(actor) {
       /* A connected wallet is the signer; the demo toggle would be a lie. */
       if (state.wallet?.address) return;
       state = { ...state, actor: actor === "stranger" ? "stranger" : "owner" };
       emit();
     },
+
     setWallet({ address, name, rdns }) {
       const candidate = String(address ?? "");
       if (!/^0x[0-9a-fA-F]{40}$/.test(candidate)) return;
@@ -245,10 +279,12 @@ export function createStore() {
       };
       emit();
     },
+
     clearWallet() {
       state = { ...state, wallet: { address: null, name: "", rdns: "" } };
       emit();
     },
+
     reset() {
       /* Reset the simulated contract, not the wallet connection. */
       state = { ...initialState(), wallet: state.wallet };
@@ -267,13 +303,13 @@ export function createStore() {
       };
     },
 
-    requireOwner() {
-      if (actorAddress().toLowerCase() !== state.owner.toLowerCase())
-        throw new ContractError("[EXPECTED]:unauthorized", "Only the contract owner can do that.");
-    },
+    ledgerOk: (snapshot = state) =>
+      snapshot.ledger.total_deposited === snapshot.ledger.total_out + snapshot.ledger.locked_total,
+
+    isEscrowExpired: (escrow) => Math.floor(Date.now() / 1000) >= Number(escrow.created_ts) + 30 * 86400,
 
     registerPolicy({ policy_id, name, source_url, guidance }) {
-      api.requireOwner();
+      requireOwner();
       const id = normalizePolicyId(policy_id);
       if (state.policies[id]) throw new ContractError("[EXPECTED]:policy_exists", `Policy "${id}" is already registered.`);
       if (Object.keys(state.policies).length >= 100)
@@ -309,7 +345,7 @@ export function createStore() {
     },
 
     updatePolicy({ policy_id, name, source_url, guidance }) {
-      api.requireOwner();
+      requireOwner();
       const id = normalizePolicyId(policy_id);
       const policy = state.policies[id];
       if (!policy) throw new ContractError("[EXPECTED]:unknown_policy", "That policy does not exist.");
@@ -336,7 +372,7 @@ export function createStore() {
     },
 
     setPolicyActive(policy_id, active) {
-      api.requireOwner();
+      requireOwner();
       const policy = state.policies[policy_id];
       if (!policy) throw new ContractError("[EXPECTED]:unknown_policy", "That policy does not exist.");
       state = { ...state, policies: { ...state.policies, [policy_id]: { ...policy, active: Boolean(active) } } };
@@ -344,11 +380,12 @@ export function createStore() {
     },
 
     transferOwnership(newOwner) {
-      api.requireOwner();
+      requireOwner();
       const candidate = String(newOwner ?? "").trim();
       if (!/^0x[0-9a-fA-F]{40}$/.test(candidate))
         throw new ContractError("[EXPECTED]:invalid_address", "That is not a valid address.");
-      if (candidate.toLowerCase() === ZERO) throw new ContractError("[EXPECTED]:zero_owner", "The zero address cannot own the contract.");
+      if (candidate.toLowerCase() === ZERO)
+        throw new ContractError("[EXPECTED]:zero_owner", "The zero address cannot own the contract.");
       state = { ...state, pendingOwner: candidate };
       emit();
     },
@@ -439,7 +476,7 @@ export function createStore() {
       else if (assessment.requester.toLowerCase() !== requester.toLowerCase()) refusal = "assessment_not_yours";
       else if (state.usedAssessments[assessment_id]) refusal = "assessment_already_used";
 
-      let target = cleanPayee;
+      const target = cleanPayee;
       if (!refusal) {
         if (!/^0x[0-9a-fA-F]{40}$/.test(cleanPayee)) refusal = "invalid_payee";
         else if (cleanPayee.toLowerCase() === ZERO) refusal = "zero_payee";
@@ -517,16 +554,11 @@ export function createStore() {
       };
       emit();
     },
-
-    isEscrowExpired(escrow) {
-      return Math.floor(Date.now() / 1000) >= Number(escrow.created_ts) + 30 * 86400;
-    },
-
-    ledgerOk(snapshot = state) {
-      const { total_deposited, total_out, locked_total } = snapshot.ledger;
-      return total_deposited === total_out + locked_total;
-    },
   };
 
   return api;
+}
+
+export function useContract(contract) {
+  return useSyncExternalStore(contract.subscribe, contract.getState, contract.getState);
 }

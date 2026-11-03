@@ -7,6 +7,7 @@ __pycache__/
 .env.*
 !.env.example
 node_modules/
+frontend/dist/
 .DS_Store
 
 # Key material — never commit a wallet, keystore or private key.

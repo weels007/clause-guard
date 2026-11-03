@@ -1,0 +1,21 @@
+server {
+  listen ${PORT};
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # The console is a hash-routed SPA: every path resolves to the shell.
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  location ~* \.(js|css|svg|png|jpg|jpeg|webp|woff2)$ {
+    expires 7d;
+    add_header Cache-Control "public, max-age=604800, immutable";
+    try_files $uri =404;
+  }
+
+  gzip on;
+  gzip_types text/css application/javascript image/svg+xml application/json;
+}
