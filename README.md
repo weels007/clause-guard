@@ -230,6 +230,13 @@ edit by its creator, an enable/disable cycle, an orphan deposit and its refund,
 denied attempts from the stranger, the owner's fee withdrawal and a real
 assessment — printing every transaction hash for the explorer trail.
 
+**Before the project is handed over**, remove the test key material: the two
+keystores and their password files are tracked in git (they were uploaded before
+`.gitignore` covered them), and CI currently depends on them. Untrack them
+(`git rm --cached tests/*-keystore.json tests/*.password`), move the values into
+repository secrets with a `wallet.py` that materialises them, then rotate the two
+throwaway accounts — git history still holds the old keys.
+
 ### Funding the escrow for real
 
 1. send GEN to the tester1 address above — a fraction of one GEN is plenty, the
