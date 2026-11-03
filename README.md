@@ -77,7 +77,8 @@ on differing stack detail.
 | `get_assessment(assessment_id)` | one assessment incl. verified `rule_quote` and `submit_ref` |
 | `get_assessments()` | all assessments keyed by id |
 | `get_assessment_ids()` | `{"ids": [...]}` in insertion order |
-| `get_escrow(escrow_id)` | funder, payee, amount, status, bound assessment |
+| `get_escrow(escrow_id)` | funder, payee, amount, status, bound assessment, created_ts |
+| `is_escrow_expired(escrow_id)` | whether the 30-day unwind fallback is active |
 | `get_ledger()` | total_deposited, total_out, locked_total |
 | `get_summary()` | totals: total, compliant, non_compliant, review, high_risk, policies |
 
@@ -103,7 +104,10 @@ verdict is `COMPLIANT`:
 Both exits check the stored funder against the caller:
 
 - `release_escrow` pays the payee — only the funder may call it;
-- `refund_escrow` returns the deposit — only the funder may call it.
+- `refund_escrow` returns the deposit — the funder may always call it, and
+  after `ESCROW_TIMEOUT_SECONDS` (30 days) anyone may trigger it, but the
+  money still goes to the stored funder. That is a liveness fallback, never a
+  way to take custody.
 
 The payee has no path to pull funds, a stranger cannot release or refund, and a
 `NON_COMPLIANT` or `REVIEW` verdict cannot be funded at all. Money leaves via
@@ -136,8 +140,10 @@ is only used as that second net.
 - **Reproducibility** — a policy cannot be re-pointed at new rules once it has
   produced assessments; register a new policy id instead.
 - **Funder-only custody** — no method transfers value except `release_escrow`
-  and `refund_escrow`, and both require the caller to equal the escrow's stored
-  funder. `create_escrow` rejects a payee that is the funder or the zero address.
+  and `refund_escrow`. Release requires the stored funder. Refund allows the
+  funder always, and anyone after the 30-day timeout, but the payout target is
+  always the stored funder, so no third party can redirect it.
+  `create_escrow` rejects a payee that is the funder or the zero address.
 - **No orphaned funds** — `__receive__` reverts, so value can only enter through
   a call that records a funder, and a refused deposit becomes a refundable
   `ORPHAN` instead of being stranded by a revert. The ledger invariant

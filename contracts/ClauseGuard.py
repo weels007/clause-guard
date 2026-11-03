@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from genlayer import *
 
@@ -48,6 +49,10 @@ ESCROW_REFUNDED = "REFUNDED"
 # recycled assessment). It is stored against the sender so it can always be
 # refunded: a payable call must never leave value stranded.
 ESCROW_ORPHAN = "ORPHAN"
+
+# After this long, anyone may unwind an escrow. The money still goes to the
+# funder, so this is a liveness fallback, never a way to take custody.
+ESCROW_TIMEOUT_SECONDS = 30 * 86400
 
 ZERO_HEX = "0" * 40
 
@@ -100,7 +105,28 @@ class Escrow:
     assessment_id: str
     reference: str
     status: str
-    created_at: str
+    created_ts: u256
+
+
+def _now_ts() -> int:
+    """Transaction timestamp in seconds. Deterministic across validators."""
+    try:
+        return int(datetime.now(timezone.utc).timestamp())
+    except Exception:
+        pass
+    try:
+        raw = gl.message_raw["datetime"]
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return int(parsed.timestamp())
+    except Exception:
+        return 0
+
+
+def _escrow_expired(escrow) -> bool:
+    created = int(escrow.created_ts)
+    if created <= 0:
+        return False
+    return _now_ts() >= created + ESCROW_TIMEOUT_SECONDS
 
 
 def _addr_hex(addr) -> str:
@@ -742,7 +768,7 @@ Decision rules:
             assessment_id="" if reason else assessment_id,
             reference=clean_reference,
             status=ESCROW_ORPHAN if reason else ESCROW_FUNDED,
-            created_at=self._now(),
+            created_ts=u256(_now_ts()),
         )
         if not reason:
             self.used_assessments[assessment_id] = True
@@ -787,14 +813,21 @@ Decision rules:
 
     @gl.public.write
     def refund_escrow(self, escrow_id: str) -> None:
-        """Return the deposit to its owner. Only the funder may call this."""
+        """Return the deposit to its owner.
+
+        The funder may always call this. After ESCROW_TIMEOUT_SECONDS anyone
+        may trigger it, but the money still goes to the stored funder, so the
+        fallback can never be used to take custody.
+        """
         if escrow_id not in self.escrows:
             raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_escrow")
 
         escrow = self.escrows[escrow_id]
         if escrow.status not in (ESCROW_FUNDED, ESCROW_ORPHAN):
             raise gl.vm.UserError(ERROR_EXPECTED + ":escrow_closed")
-        if not _addr_eq(escrow.funder, gl.message.sender_address):
+
+        is_funder = _addr_eq(escrow.funder, gl.message.sender_address)
+        if not is_funder and not _escrow_expired(escrow):
             raise gl.vm.UserError(ERROR_EXPECTED + ":not_funder")
 
         amount = int(escrow.amount)
@@ -862,7 +895,14 @@ Decision rules:
             "assessment_id": escrow.assessment_id,
             "reference": escrow.reference,
             "status": escrow.status,
+            "created_ts": int(escrow.created_ts),
         }
+
+    @gl.public.view
+    def is_escrow_expired(self, escrow_id: str) -> bool:
+        if escrow_id not in self.escrows:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_escrow")
+        return _escrow_expired(self.escrows[escrow_id])
 
     @gl.public.view
     def get_ledger(self) -> dict:

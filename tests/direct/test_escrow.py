@@ -250,6 +250,48 @@ def test_orphan_cannot_be_released(direct_vm, direct_deploy, direct_owner, direc
         contract.release_escrow(escrow_id)
 
 
+def test_escrow_is_not_expired_when_created(
+    direct_vm, direct_deploy, direct_owner, direct_alice
+):
+    direct_vm.warp("2024-01-01T00:00:00Z")
+    contract, assessment_id = _compliant_assessment(
+        direct_vm, direct_deploy, direct_owner
+    )
+
+    direct_vm.value = 1000
+    escrow_id = contract.create_escrow(assessment_id, direct_alice, "PO-1")
+    direct_vm.value = 0
+
+    assert contract.is_escrow_expired(escrow_id) is False
+
+    # A day later the funder is still the only one who may unwind it.
+    direct_vm.warp("2024-01-02T00:00:00Z")
+    assert contract.is_escrow_expired(escrow_id) is False
+
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("[EXPECTED]:not_funder"):
+        contract.refund_escrow(escrow_id)
+
+
+def test_escrow_expires_after_the_timeout(
+    direct_vm, direct_deploy, direct_owner, direct_alice
+):
+    direct_vm.warp("2024-01-01T00:00:00Z")
+    contract, assessment_id = _compliant_assessment(
+        direct_vm, direct_deploy, direct_owner
+    )
+
+    direct_vm.value = 1000
+    escrow_id = contract.create_escrow(assessment_id, direct_alice, "PO-1")
+    direct_vm.value = 0
+
+    assert contract.is_escrow_expired(escrow_id) is False
+    # The escrow did not exist a moment ago, so a stranger can still not
+    # touch it: the timeout is the only thing that widens who may unwind.
+    direct_vm.warp("2024-01-31T00:00:00Z")
+    assert contract.is_escrow_expired(escrow_id) is True
+
+
 def test_unknown_escrow_reverts(direct_vm, direct_deploy, direct_owner):
     contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_owner
