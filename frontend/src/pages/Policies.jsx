@@ -12,6 +12,7 @@ export default function Policies({ contract, state }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [nominee, setNominee] = useState("");
+  const [actionBusy, setActionBusy] = useState(null);
 
   const policies = Object.values(state.policies).sort((a, b) => a.policy_id.localeCompare(b.policy_id));
   const isOwner = contract.isOwner();
@@ -72,30 +73,42 @@ export default function Policies({ contract, state }) {
   };
 
   const toggle = async (policy) => {
+    if (actionBusy) return;
+    setActionBusy(`toggle:${policy.policy_id}`);
     try {
       await contract.setPolicyActive(policy.policy_id, !policy.active);
       toast("ok", policy.active ? "Policy disabled" : "Policy enabled", `Assessments can${policy.active ? " no longer" : " now"} use it.`);
     } catch (err) {
       toast("error", "Not changed", humanizeError(err));
+    } finally {
+      setActionBusy(null);
     }
   };
 
   const nominate = async () => {
+    if (actionBusy) return;
+    setActionBusy("nominate");
     try {
       await contract.transferOwnership(nominee);
       setNominee("");
       toast("ok", "Nominated", "The successor must accept before ownership moves.");
     } catch (err) {
       toast("error", "Not nominated", humanizeError(err));
+    } finally {
+      setActionBusy(null);
     }
   };
 
   const accept = async () => {
+    if (actionBusy) return;
+    setActionBusy("accept");
     try {
       await contract.acceptOwnership();
       toast("ok", "Ownership moved", "You are now the contract owner.");
     } catch (err) {
       toast("error", "Ownership not accepted", humanizeError(err));
+    } finally {
+      setActionBusy(null);
     }
   };
 
@@ -143,7 +156,14 @@ export default function Policies({ contract, state }) {
                   </div>
                   <div className="list-side">
                     <span className={`pill ${policy.active ? "ok" : ""}`}>{policy.active ? "live" : "off"}</span>
-                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => toggle(policy)}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      type="button"
+                      onClick={() => toggle(policy)}
+                      disabled={Boolean(actionBusy)}
+                      aria-busy={actionBusy === `toggle:${policy.policy_id}`}
+                    >
+                      {actionBusy === `toggle:${policy.policy_id}` ? <span className="spin" /> : null}
                       {policy.active ? "Disable" : "Enable"}
                     </button>
                     {policy.assessments === 0 ? (
@@ -263,7 +283,14 @@ export default function Policies({ contract, state }) {
                 <input value={nominee} onChange={(event) => setNominee(event.target.value)} placeholder="0x…" />
               </label>
               <div style={{ display: "flex", alignItems: "end" }}>
-                <button className="btn btn-ghost" type="button" onClick={nominate}>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={nominate}
+                  disabled={Boolean(actionBusy)}
+                  aria-busy={actionBusy === "nominate"}
+                >
+                  {actionBusy === "nominate" ? <span className="spin" /> : null}
                   Nominate
                 </button>
               </div>
@@ -277,7 +304,14 @@ export default function Policies({ contract, state }) {
                 charge.
               </p>
               <div className="form-actions">
-                <button className="btn btn-primary btn-sm" type="button" onClick={accept}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  type="button"
+                  onClick={accept}
+                  disabled={Boolean(actionBusy)}
+                  aria-busy={actionBusy === "accept"}
+                >
+                  {actionBusy === "accept" ? <span className="spin" /> : null}
                   Accept ownership
                 </button>
               </div>

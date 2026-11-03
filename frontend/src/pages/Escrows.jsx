@@ -10,6 +10,7 @@ export default function Escrows({ contract, state }) {
   const [open, setOpen] = useState(false);
   const [fund, setFund] = useState(EMPTY_FUND);
   const [busy, setBusy] = useState(false);
+  const [settling, setSettling] = useState(null);
   const [error, setError] = useState("");
 
   const actor = contract.actorAddress();
@@ -63,15 +64,19 @@ export default function Escrows({ contract, state }) {
   };
 
   const settle = async (escrow, kind) => {
+    if (settling) return;
     const verb = kind === "release" ? "release" : "refund";
     const target = kind === "release" ? "the payee" : "the funder";
     if (!window.confirm(`${verb} ${formatWei(escrow.amount)} wei to ${target}?`)) return;
+    setSettling(`${escrow.escrow_id}:${kind}`);
     try {
       if (kind === "release") await contract.releaseEscrow(escrow.escrow_id);
       else await contract.refundEscrow(escrow.escrow_id);
       toast("ok", `Escrow ${verb}d`, `${escrow.escrow_id} · ${formatWei(escrow.amount)} wei sent to ${target}.`);
     } catch (err) {
       toast("error", "Not settled", humanizeError(err));
+    } finally {
+      setSettling(null);
     }
   };
 
@@ -128,12 +133,26 @@ export default function Escrows({ contract, state }) {
                   {stillOpen && (
                     <div className="escrow-actions">
                       {canAct && escrow.status === "FUNDED" && (
-                        <button className="btn btn-primary btn-sm" type="button" onClick={() => settle(escrow, "release")}>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          type="button"
+                          onClick={() => settle(escrow, "release")}
+                          disabled={Boolean(settling)}
+                          aria-busy={settling === `${escrow.escrow_id}:release`}
+                        >
+                          {settling === `${escrow.escrow_id}:release` ? <span className="spin" /> : null}
                           Release to payee
                         </button>
                       )}
                       {canAct && (
-                        <button className="btn btn-ghost btn-sm" type="button" onClick={() => settle(escrow, "refund")}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          type="button"
+                          onClick={() => settle(escrow, "refund")}
+                          disabled={Boolean(settling)}
+                          aria-busy={settling === `${escrow.escrow_id}:refund`}
+                        >
+                          {settling === `${escrow.escrow_id}:refund` ? <span className="spin" /> : null}
                           Refund to funder
                         </button>
                       )}
