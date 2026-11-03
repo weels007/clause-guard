@@ -65,6 +65,19 @@ def send(client, account, address, method, args, value=0):
     return receipt
 
 
+def send_expect_fail(client, account, address, method, args, value=0):
+    """Send a call that the contract must refuse; the tx still exists on chain."""
+    tx_hash = client.write_contract(address, method, account=account, args=args, value=value)
+    print(f"[smoke] {method} (must be refused) tx {tx_hash}")
+    receipt = client.wait_for_transaction_receipt(
+        tx_hash, retries=POLL_RETRIES, interval=POLL_INTERVAL
+    )
+    if execution_succeeded(receipt):
+        raise SystemExit(f"[smoke] {method} was expected to be refused: {receipt}")
+    print(f"[smoke] {method} refused, as it should be")
+    return receipt
+
+
 def read(client, address, method, args=None):
     return client.read_contract(address, method, args=args or [])
 
@@ -106,7 +119,60 @@ def main() -> int:
     )
     print(f"[smoke] registered          {policy_id}")
 
-    # 2. The owner runs an assessment on the seeded policy.
+    # 2. The creator may fix it before any assessment locks it.
+    send(
+        client,
+        stranger,
+        address,
+        "update_policy",
+        [policy_id, "Smoke policy v2", RULES_URL, GUIDANCE + " Updated."],
+    )
+    print(f"[smoke] updated             {policy_id}")
+
+    # 3. Only the owner may switch a policy off, and an inactive policy cannot
+    #    be assessed.
+    send(client, owner, address, "set_policy_active", [policy_id, False])
+    send_expect_fail(
+        client,
+        owner,
+        address,
+        "assess",
+        [policy_id, "ACME", "Vendor", "10 EUR", "inactive", f"inactive-{stamp}"],
+    )
+    send(client, owner, address, "set_policy_active", [policy_id, True])
+    print(f"[smoke] policy toggled      {policy_id}")
+
+    # 4. A deposit against an id that does not exist becomes a refundable orphan:
+    #    nobody can release it, and the funder gets it back.
+    send(
+        client,
+        owner,
+        address,
+        "create_escrow",
+        ["ca-999", stranger.address, "smoke orphan"],
+        value=ESCROW_WEI,
+    )
+    escrows = read(client, address, "get_escrows")
+    orphans = [
+        escrow
+        for escrow in escrows.values()
+        if str(escrow.get("funder", "")).lower().replace("0x", "")
+        == owner.address.lower().replace("0x", "")
+        and escrow["status"] == "ORPHAN"
+    ]
+    orphan_id = max(orphans, key=lambda row: int(str(row["escrow_id"]).split("-")[-1]))["escrow_id"]
+    print(f"[smoke] orphan escrow       {orphan_id}")
+    send_expect_fail(client, owner, address, "release_escrow", [orphan_id])
+    send_expect_fail(client, stranger, address, "refund_escrow", [orphan_id])
+    send(client, owner, address, "refund_escrow", [orphan_id])
+    print(f"[smoke] orphan refunded     {orphan_id}")
+
+    # 5. Only the owner may take the registration fees out.
+    send_expect_fail(client, stranger, address, "withdraw_policy_fees", [])
+    send(client, owner, address, "withdraw_policy_fees", [])
+    print(f"[smoke] fees withdrawn      {read(client, address, 'get_policy_fee')}")
+
+    # 6. The owner runs an assessment on the seeded policy (live LLM consensus).
     submit_ref = f"smoke-{stamp}"
     send(
         client,
@@ -132,7 +198,7 @@ def main() -> int:
         f"{assessment['verdict']} {assessment['risk_band']}"
     )
 
-    # 3. A COMPLIANT verdict can back an escrow; then the funder releases it.
+    # 7. A COMPLIANT verdict can back an escrow; then the funder releases it.
     if assessment["verdict"] == "COMPLIANT":
         send(
             client,
@@ -148,8 +214,9 @@ def main() -> int:
             for escrow in escrows.values()
             if str(escrow.get("funder", "")).lower().replace("0x", "")
             == owner.address.lower().replace("0x", "")
+            and escrow["status"] == "FUNDED"
         ]
-        escrow_id = sorted(mine_escrows, key=lambda row: int(str(row["escrow_id"]).split("-")[-1]))[-1]["escrow_id"]
+        escrow_id = max(mine_escrows, key=lambda row: int(str(row["escrow_id"]).split("-")[-1]))["escrow_id"]
         print(f"[smoke] escrow              {escrow_id}")
         send(client, owner, address, "release_escrow", [escrow_id])
         print(f"[smoke] released            {escrow_id}")
@@ -157,6 +224,7 @@ def main() -> int:
         print("[smoke] verdict was not COMPLIANT, so no escrow is funded")
 
     print(f"[smoke] get_summary after   {read(client, address, 'get_summary')}")
+    print(f"[smoke] get_escrows after   {sorted(read(client, address, 'get_escrows'))}")
     print("[smoke] done")
     return 0
 
