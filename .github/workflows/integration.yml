@@ -28,3 +28,9 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: gltest tests/integration/ -v -s --network studionet
+        env:
+          # Optional: pin the signers by uncommenting the accounts block in
+          # gltest.config.yaml and adding these repository secrets.
+          CLAUSEGUARD_TEST_KEY: ${{ secrets.CLAUSEGUARD_TEST_KEY }}
+          CLAUSEGUARD_STRANGER_KEY: ${{ secrets.CLAUSEGUARD_STRANGER_KEY }}
+          CLAUSEGUARD_PAYEE_KEY: ${{ secrets.CLAUSEGUARD_PAYEE_KEY }}

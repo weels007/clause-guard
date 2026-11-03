@@ -907,6 +907,14 @@ Decision rules:
         }
 
     @gl.public.view
+    def get_balance(self) -> u256:
+        """GEN actually held by the contract, for cross-checking the ledger."""
+        try:
+            return self.balance
+        except Exception:
+            return u256(0)
+
+    @gl.public.view
     def get_summary(self) -> dict:
         # Counters are maintained on write, so this view stays O(1) no matter
         # how many assessments exist.

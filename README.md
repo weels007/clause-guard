@@ -80,6 +80,7 @@ on differing stack detail.
 | `get_escrow(escrow_id)` | funder, payee, amount, status, bound assessment, created_ts |
 | `is_escrow_expired(escrow_id)` | whether the 30-day unwind fallback is active |
 | `get_ledger()` | total_deposited, total_out, locked_total |
+| `get_balance()` | GEN actually held by the contract |
 | `get_summary()` | totals: total, compliant, non_compliant, review, high_risk, policies |
 
 Risk bands: `LOW` (0–33), `MEDIUM` (34–66), `HIGH` (67–100), computed from the
@@ -189,6 +190,40 @@ Two facts about it:
 `.github/workflows/integration.yml` runs the suite when the contract changes
 or on demand (`workflow_dispatch`): it deploys to studionet, pays for real
 execution, and depends on live web and LLM behaviour.
+
+## Addresses
+
+From the studionet run of commit `83a53da`:
+
+| Role | Address |
+|---|---|
+| ClauseGuard contract | `0xe0755aeb89aDC69d1D8C2773972680fCFF16bFE9` |
+| Deployment signer (owner) | `0x5AcF9e4Cc50fB72eb8DA201A72cA05a4F7e0A61e` |
+| Escrow payee (constant in the suite) | `0xabababababababababababababababababababab` |
+
+**Read this before sending GEN.** Those addresses are from one run and are
+ephemeral: every studionet run generates fresh accounts and deploys a new
+contract, so GEN sent to them now sits under a key nobody holds and against a
+contract the next run will not touch. The payee address is a constant burn
+target — never fund it.
+
+### Funding the escrow for real
+
+To make "send GEN, watch it refund" meaningful, pin the signer:
+
+1. create three throwaway keys (`genlayer account create`, or any wallet) —
+   never a wallet you care about;
+2. add them as repository secrets named `CLAUSEGUARD_TEST_KEY`,
+   `CLAUSEGUARD_STRANGER_KEY`, `CLAUSEGUARD_PAYEE_KEY`;
+3. uncomment the `accounts:` block in `gltest.config.yaml`;
+4. fund the `CLAUSEGUARD_TEST_KEY` address, then run the workflow.
+   `default_account` is now a fixed address, so the balance survives between
+   runs and `create_escrow` / `refund_escrow` move real value.
+
+Studionet's faucet is the droplet in the Studio account selector and funds the
+Studio account, not an arbitrary address. For "send GEN to this address and
+watch it move", Bradbury is the practical network: its faucet accepts an
+address, and the same suite runs with `--network testnet_bradbury`.
 
 ## Seeing transactions in the explorer
 
