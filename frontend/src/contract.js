@@ -73,7 +73,19 @@ export function humanizeError(error) {
   if (!error) return "Something went wrong.";
   const code = String(error.code || "").replace(/^\[[A-Z_]+\]:/, "");
   if (ERROR_TEXT[code]) return ERROR_TEXT[code];
-  return error.message || "Something went wrong.";
+
+  /* Wallet-side failures arrive as prose, not contract codes. */
+  const message = String(error.message || "");
+  if (/reject|denied|declined/i.test(message)) {
+    return "You rejected the transaction in your wallet.";
+  }
+  if (/insufficient funds|exceeds balance|gas required exceeds/i.test(message)) {
+    return "Not enough GEN in this wallet to cover the fee and gas.";
+  }
+  if (/user is not connected|account not found|no account/i.test(message)) {
+    return "The wallet is locked or has no account. Unlock it and reconnect.";
+  }
+  return message || "Something went wrong.";
 }
 
 function sanitize(value, limit) {
