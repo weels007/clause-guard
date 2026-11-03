@@ -11,6 +11,7 @@ on:
     paths:
       - "contracts/**"
       - "tests/integration/**"
+      - "scripts/**"
       - "gltest.config.yaml"
       - "requirements.txt"
       - ".github/workflows/integration.yml"
