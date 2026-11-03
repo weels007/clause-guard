@@ -112,6 +112,7 @@ def ensure_policy(client, account, address: str) -> None:
         args=[POLICY_ID, POLICY_NAME, RULES_URL, GUIDANCE],
         account=account,
     )
+    print(f"[seed] transaction {tx_hash}")
     receipt = wait(client, tx_hash)
 
     # The write is non-idempotent, so judge it by the state it was meant to change.

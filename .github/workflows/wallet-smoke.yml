@@ -1,0 +1,37 @@
+name: Wallet Smoke
+
+# Drives the pinned contract from frontend/src/config.js with the two tester
+# wallets, printing every transaction hash, so that address shows a real method
+# trail in the explorer. The integration suite deploys its own throwaway
+# contract; this one exercises the deployment the console actually uses.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/smoke.py"
+      - ".github/workflows/wallet-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wallet-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Wallet smoke on the pinned contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Smoke
+        env:
+          CLAUSEGUARD_TESTER1_PASSWORD: ${{ secrets.CLAUSEGUARD_TESTER1_PASSWORD }}
+          CLAUSEGUARD_TESTER2_PASSWORD: ${{ secrets.CLAUSEGUARD_TESTER2_PASSWORD }}
+        run: python scripts/smoke.py
