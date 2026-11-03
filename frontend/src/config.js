@@ -9,5 +9,5 @@
  * An empty address means no deployment has been recorded yet, and the console
  * falls back to its local simulation so the screens still work.
  */
-export const CONTRACT_ADDRESS = "0x882f7a65a458Ce1DBE541d3DA9844090f139ccE7";
-export const CONTRACT_REVISION = "";
+export const CONTRACT_ADDRESS = "0x5E99d444F316cea4752CB55e0cE876182f164CeB";
+export const CONTRACT_REVISION = "a4d88704c708";

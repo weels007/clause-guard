@@ -59,4 +59,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add frontend/src/config.js
           git commit -m "Record the deployed ClauseGuard address"
-          git push
+
+          # A push can land while the deployment runs; rebase onto it and retry
+          # instead of losing the recorded address.
+          for attempt in 1 2 3; do
+            if git pull --rebase origin main && git push; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Could not push the recorded address" >&2
+          exit 1
