@@ -10,6 +10,9 @@ on:
   push:
     paths:
       - "contracts/**"
+      - "tests/integration/**"
+      - "gltest.config.yaml"
+      - "requirements.txt"
       - ".github/workflows/integration.yml"
   workflow_dispatch:
 

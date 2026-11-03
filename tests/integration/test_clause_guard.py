@@ -67,10 +67,10 @@ def _tx_id(receipt):
 
 
 def _transact(contract, method, args, account=None, value=0):
-    call = getattr(contract, method)(args=args)
+    # The account is bound to the contract instance, not to transact().
+    actor = contract if account is None else contract.connect(account)
+    call = getattr(actor, method)(args=args)
     kwargs = dict(CONSENSUS)
-    if account is not None:
-        kwargs["account"] = account
     if value:
         kwargs["value"] = value
     receipt = call.transact(**kwargs)
