@@ -186,9 +186,9 @@ Two facts about it:
   payee, `ORPHAN` refunds to the funder — so one real transfer still happens
   either way.
 
-`.github/workflows/integration.yml` runs the same suite on demand
-(`workflow_dispatch`) rather than on every push: it deploys to studionet, pays
-for real execution, and depends on live web and LLM behaviour.
+`.github/workflows/integration.yml` runs the suite when the contract changes
+or on demand (`workflow_dispatch`): it deploys to studionet, pays for real
+execution, and depends on live web and LLM behaviour.
 
 ## Seeing transactions in the explorer
 
