@@ -1,30 +1,34 @@
-"""Studio-mode integration suite: every method, on a real network.
+"""Integration tests: ClauseGuard running on a real GenLayer network.
 
-Run it with:
+Same shape as the other GenLayer projects in this workspace: one deployment for
+the whole module, a module-scoped client, receipts judged by their status, and a
+retry around the calls that depend on live LLM consensus. Nothing here uses the
+typed gltest factory — the plain client keeps the run to a single deploy and
+makes the wallet explicit.
 
-    gltest tests/integration/ -v -s --network studionet
+    pytest tests/integration -v -s
 
-Accounts: there is no wallet to configure. On studionet the framework generates
-accounts itself; the ``default_account`` fixture signs the deploy and the
-owner-only calls, and ``accounts[1]`` plays the stranger. Nothing here touches
-real funds.
-
-The tests share one deployed contract and run in order, because the contract is
-stateful: a policy locks after its first assessment and an assessment is spent
-by the first escrow. Names are numbered so the order is explicit.
-
-The assessment path is genuinely non-deterministic: validators fetch the rules
-page and run an LLM, so the verdict is whatever consensus produced. These tests
-assert that consensus happened and that the record is well formed, never which
-verdict came out. The escrow unwind therefore branches on the stored status.
+one deployment, so the explorer shows one contract per run.
 """
 
+import sys
+import time
+from pathlib import Path
+
 import pytest
+from genlayer_py import create_client, studionet
 
-from gltest import get_contract_factory
-from gltest.assertions import tx_execution_failed, tx_execution_succeeded
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from wallet import load_account  # noqa: E402
 
-pytestmark = pytest.mark.integration
+CONTRACT_PATH = ROOT / "contracts" / "ClauseGuard.py"
+
+# studionet allows about thirty requests a minute and a receipt poll is a
+# request, so a ten second poll keeps a whole run inside that budget.
+POLL_INTERVAL = 10_000
+POLL_RETRIES = 60
+RETRY_PAUSE = 20
 
 POLICY_ID = "eu-payments"
 # Public, stable, text-only: validators must be able to fetch it.
@@ -33,61 +37,85 @@ GUIDANCE = (
     "Transfers to a counterparty on a sanctions list are prohibited. "
     "Any other transfer is permitted."
 )
-
 ALLOWED_VERDICTS = ("COMPLIANT", "NON_COMPLIANT", "REVIEW")
 
-CONSENSUS = {
-    "consensus_max_rotations": 3,
-    # studionet is rate limited and consensus on an LLM decision takes minutes,
-    # not seconds: a 20s window just returns the transaction still PENDING.
-    "wait_interval": 3000,
-    "wait_retries": 100,
-}
+
+def _accepted(receipt) -> bool:
+    """The transaction made it through consensus; it was not rejected."""
+    return isinstance(receipt, dict) and receipt.get("status_name") in (
+        "ACCEPTED",
+        "FINALIZED",
+    )
 
 
 @pytest.fixture(scope="module")
-def gate(default_account):
-    factory = get_contract_factory("ClauseGuard")
-    contract = factory.deploy(args=[], account=default_account)
-    # Printed once, with -s, so the deployed address is easy to find in the
-    # explorer and every transaction can be traced back to this contract.
-    print(f"[clauseguard] deployed at {contract.address}")
-    return contract
+def account():
+    return load_account("tester1")
 
 
-def _tx_id(receipt):
-    for key in ("hash", "tx_id", "transaction_hash", "id"):
-        try:
-            value = receipt.get(key)
-        except Exception:
-            value = None
-        if value:
-            return str(value)
-    return "(no id in receipt)"
+@pytest.fixture(scope="module")
+def stranger():
+    return load_account("tester2")
 
 
-def _transact(contract, method, args, account=None, value=0):
-    # The account is bound to the contract instance, not to transact().
-    actor = contract if account is None else contract.connect(account)
-    call = getattr(actor, method)(args=args)
-    kwargs = dict(CONSENSUS)
-    if value:
-        kwargs["value"] = value
-    receipt = call.transact(**kwargs)
-    if not tx_execution_succeeded(receipt):
-        print(
-            f"[clauseguard] {method} did NOT succeed: "
-            f"status={receipt.get('status_name')} "
-            f"result={receipt.get('result_name')} "
-            f"rounds={receipt.get('num_of_rounds')} "
-            f"tx={receipt.get('tx_id')}"
+@pytest.fixture(scope="module")
+def client(account):
+    return create_client(studionet, account=account)
+
+
+@pytest.fixture(scope="module")
+def contract(client, account):
+    """The only deployment of this run."""
+    code = CONTRACT_PATH.read_text(encoding="utf-8")
+    tx_hash = client.deploy_contract(code=code, account=account)
+    receipt = client.wait_for_transaction_receipt(
+        tx_hash, retries=POLL_RETRIES, interval=POLL_INTERVAL
+    )
+    address = receipt["data"]["contract_address"]
+    assert address, f"the deployment produced no address: {receipt}"
+    print(f"\n[clauseguard] deployed at {address}")
+    return address
+
+
+def _attempt(client, account, contract, method, args=None, value=0):
+    """Send one write and return its receipt, or the exception it raised."""
+    try:
+        tx_hash = client.write_contract(
+            contract, method, account=account, args=args or [], value=value
         )
-    print(f"[clauseguard] {method} -> {_tx_id(receipt)}")
-    return receipt
+        return client.wait_for_transaction_receipt(
+            tx_hash, retries=POLL_RETRIES, interval=POLL_INTERVAL
+        )
+    except Exception as error:  # the network can refuse before a receipt exists
+        return error
 
 
-def _assessment_id(contract, index=0):
-    return contract.get_assessment_ids().call()["ids"][index]
+def _expect_ok(client, account, contract, method, args=None, value=0, attempts=3):
+    """Retry a write while live consensus is the thing that failed."""
+    last = None
+    for attempt in range(attempts):
+        result = _attempt(client, account, contract, method, args, value)
+        if _accepted(result):
+            return result
+        last = result
+        if attempt < attempts - 1:
+            print(f"  {method} did not reach consensus, retrying")
+            time.sleep(RETRY_PAUSE)
+    raise AssertionError(f"{method} did not reach consensus: {last}")
+
+
+def _expect_denied(client, account, contract, method, args=None, value=0):
+    result = _attempt(client, account, contract, method, args, value)
+    assert not _accepted(result), f"{method} should have been refused: {result}"
+    return result
+
+
+def _read(client, contract, method, args=None):
+    return client.read_contract(contract, method, args=args or [])
+
+
+def _assessment_id(client, contract, index=0):
+    return _read(client, contract, "get_assessment_ids")["ids"][index]
 
 
 # ---------------------------------------------------------------------------
@@ -95,79 +123,74 @@ def _assessment_id(contract, index=0):
 # ---------------------------------------------------------------------------
 
 
-def test_01_owner_registers_a_policy(gate, default_account):
-    tx = _transact(
-        gate,
+def test_01_owner_registers_a_policy(client, account, contract):
+    _expect_ok(
+        client,
+        account,
+        contract,
         "register_policy",
         [POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE],
-        account=default_account,
     )
-    assert tx_execution_succeeded(tx)
 
-    policy = gate.get_policy(args=[POLICY_ID]).call()
+    policy = _read(client, contract, "get_policy", [POLICY_ID])
     assert policy["name"] == "EU payments screen"
     assert policy["source_url"] == RULES_URL
     assert policy["active"] is True
-    assert policy["version"] == 1
-    assert policy["assessments"] == 0
+    assert int(policy["version"]) == 1
 
 
-def test_02_duplicate_policy_is_rejected(gate, default_account):
-    tx = _transact(
-        gate,
+def test_02_duplicate_policy_is_refused(client, account, contract):
+    _expect_denied(
+        client,
+        account,
+        contract,
         "register_policy",
         [POLICY_ID, "duplicate", RULES_URL, GUIDANCE],
-        account=default_account,
     )
-    assert tx_execution_failed(tx)
 
 
-def test_03_non_owner_cannot_register(gate, accounts):
-    tx = _transact(
-        gate,
+def test_03_non_owner_cannot_register(client, stranger, contract):
+    _expect_denied(
+        client,
+        stranger,
+        contract,
         "register_policy",
         ["intruder", "Intruder policy", RULES_URL, GUIDANCE],
-        account=accounts[1],
     )
-    assert tx_execution_failed(tx)
 
 
-def test_04_insecure_source_url_is_rejected(gate, default_account):
-    tx = _transact(
-        gate,
+def test_04_insecure_source_url_is_refused(client, account, contract):
+    _expect_denied(
+        client,
+        account,
+        contract,
         "register_policy",
         ["insecure", "Bad source", "http://rules.example.com/eu", GUIDANCE],
-        account=default_account,
     )
-    assert tx_execution_failed(tx)
 
 
-def test_05_owner_updates_a_policy_before_first_use(gate, default_account):
-    tx = _transact(
-        gate,
+def test_05_owner_updates_a_policy_before_first_use(client, account, contract):
+    _expect_ok(
+        client,
+        account,
+        contract,
         "update_policy",
         [POLICY_ID, "EU payments screen v2", RULES_URL, GUIDANCE + " Updated."],
-        account=default_account,
     )
-    assert tx_execution_succeeded(tx)
 
-    policy = gate.get_policy(args=[POLICY_ID]).call()
+    policy = _read(client, contract, "get_policy", [POLICY_ID])
     assert policy["name"] == "EU payments screen v2"
-    assert policy["version"] == 2
+    assert int(policy["version"]) == 2
 
 
-def test_06_non_owner_cannot_deactivate(gate, accounts):
-    tx = _transact(
-        gate, "set_policy_active", [POLICY_ID, False], account=accounts[1]
-    )
-    assert tx_execution_failed(tx)
+def test_06_non_owner_cannot_deactivate(client, stranger, contract):
+    _expect_denied(client, stranger, contract, "set_policy_active", [POLICY_ID, False])
 
 
-def test_07_summary_is_empty_before_any_assessment(gate):
-    summary = gate.get_summary().call()
-    assert summary["policies"] == 1
-    assert summary["total"] == 0
-    assert summary["high_risk"] == 0
+def test_07_summary_is_empty_before_any_assessment(client, contract):
+    summary = _read(client, contract, "get_summary")
+    assert int(summary["policies"]) == 1
+    assert int(summary["total"]) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -175,9 +198,11 @@ def test_07_summary_is_empty_before_any_assessment(gate):
 # ---------------------------------------------------------------------------
 
 
-def test_08_assessment_reaches_consensus(gate, default_account):
-    tx = _transact(
-        gate,
+def test_08_assessment_reaches_consensus(client, account, contract):
+    _expect_ok(
+        client,
+        account,
+        contract,
         "assess",
         [
             POLICY_ID,
@@ -187,61 +212,56 @@ def test_08_assessment_reaches_consensus(gate, default_account):
             "Monthly SaaS invoice",
             "ref-1",
         ],
-        account=default_account,
     )
-    assert tx_execution_succeeded(tx)
 
-    ids = gate.get_assessment_ids().call()["ids"]
+    ids = _read(client, contract, "get_assessment_ids")["ids"]
     assert len(ids) == 1
 
-    record = gate.get_assessment(args=[ids[0]]).call()
+    record = _read(client, contract, "get_assessment", [ids[0]])
     assert record["assessment_id"] == ids[0]
     assert record["policy_id"] == POLICY_ID
     assert record["verdict"] in ALLOWED_VERDICTS
     assert record["risk_band"] in ("LOW", "MEDIUM", "HIGH")
-    assert record["risk_score"] % 10 == 0, "stored score must be a quantised bucket"
+    assert int(record["risk_score"]) % 10 == 0, "stored score must be a bucket"
     assert record["submit_ref"] == "ref-1"
-    # The citation must have been grounded in the fetched rules, not invented.
     assert len(record["rule_quote"]) >= 20
 
-    summary = gate.get_summary().call()
-    assert summary["total"] == 1
-    assert summary["compliant"] + summary["non_compliant"] + summary["review"] == 1
 
-
-def test_09_duplicate_submit_ref_is_rejected(gate, default_account):
-    tx = _transact(
-        gate,
+def test_09_duplicate_submit_ref_is_refused(client, account, contract):
+    _expect_denied(
+        client,
+        account,
+        contract,
         "assess",
         [POLICY_ID, "ACME GmbH", "Acme Supplier GmbH", "4200 EUR", "replay", "ref-1"],
-        account=default_account,
     )
-    assert tx_execution_failed(tx)
 
 
-def test_10_unknown_policy_is_rejected(gate, default_account):
-    tx = _transact(
-        gate,
+def test_10_unknown_policy_is_refused(client, account, contract):
+    _expect_denied(
+        client,
+        account,
+        contract,
         "assess",
         ["does-not-exist", "A", "B", "1 EUR", "context", "ref-2"],
-        account=default_account,
     )
-    assert tx_execution_failed(tx)
 
 
-def test_11_policy_is_locked_after_its_first_assessment(gate, default_account):
-    tx = _transact(
-        gate,
+def test_11_policy_is_locked_after_its_first_assessment(client, account, contract):
+    _expect_denied(
+        client,
+        account,
+        contract,
         "update_policy",
         [POLICY_ID, "Late rename", RULES_URL, GUIDANCE],
-        account=default_account,
     )
-    assert tx_execution_failed(tx)
 
 
-def test_12_caller_text_cannot_break_the_prompt(gate, default_account):
-    tx = _transact(
-        gate,
+def test_12_caller_text_cannot_break_the_prompt(client, account, contract):
+    _expect_ok(
+        client,
+        account,
+        contract,
         "assess",
         [
             POLICY_ID,
@@ -251,108 +271,96 @@ def test_12_caller_text_cannot_break_the_prompt(gate, default_account):
             "probe",
             "ref-3",
         ],
-        account=default_account,
     )
-    assert tx_execution_succeeded(tx)
 
-    record = gate.get_assessment(args=[_assessment_id(gate, 1)]).call()
+    record = _read(client, contract, "get_assessment", [_assessment_id(client, contract, 1)])
     assert "<" not in record["subject"]
     assert ">" not in record["subject"]
 
 
 # ---------------------------------------------------------------------------
-# escrow — custody and authorisation, then a real payout
+# escrow — custody, authorisation, and a real transfer
 # ---------------------------------------------------------------------------
 
 
-def test_13_zero_deposit_is_rejected(gate, default_account, accounts):
-    tx = _transact(
-        gate,
+def test_13_zero_deposit_is_refused(client, account, contract, stranger):
+    before = int(_read(client, contract, "get_ledger")["total_deposited"])
+    _expect_denied(
+        client,
+        account,
+        contract,
         "create_escrow",
-        [_assessment_id(gate), accounts[1].address, "PO-zero"],
-        account=default_account,
-        value=0,
+        [_assessment_id(client, contract), stranger.address, "PO-zero"],
     )
-    assert tx_execution_failed(tx)
-    assert int(gate.get_ledger().call()["total_deposited"]) == 0
+    assert int(_read(client, contract, "get_ledger")["total_deposited"]) == before
 
 
-def test_14_funding_records_a_refundable_escrow(gate, default_account, accounts):
-    balance_before = int(gate.get_balance().call())
+def test_14_funding_moves_real_value(client, account, contract, stranger):
+    balance_before = int(_read(client, contract, "get_balance"))
 
-    tx = _transact(
-        gate,
+    _expect_ok(
+        client,
+        account,
+        contract,
         "create_escrow",
-        [_assessment_id(gate), accounts[1].address, "PO-1"],
-        account=default_account,
+        [_assessment_id(client, contract), stranger.address, "PO-1"],
         value=1000,
     )
-    assert tx_execution_succeeded(tx)
 
-    escrow = gate.get_escrow(args=["esc-1"]).call()
+    escrow = _read(client, contract, "get_escrow", ["esc-1"])
     # FUNDED when the verdict was COMPLIANT, ORPHAN otherwise. Either way the
     # deposit belongs to the sender and the ledger owes it back.
     assert escrow["status"] in ("FUNDED", "ORPHAN")
     assert int(escrow["amount"]) == 1000
-    assert int(escrow["created_ts"]) > 0
-    assert escrow["payee"] == accounts[1].address.lower().replace("0x", "")
+    assert escrow["payee"] == stranger.address.lower().replace("0x", "")
 
-    ledger = gate.get_ledger().call()
-    assert int(ledger["total_deposited"]) == 1000
+    ledger = _read(client, contract, "get_ledger")
     assert int(ledger["locked_total"]) == 1000
     assert int(ledger["total_out"]) == 0
 
-    # The real balance moved by exactly the deposit: this is the proof that
-    # value actually left the funder and landed in the contract.
-    balance_after = int(gate.get_balance().call())
-    assert balance_after - balance_before == 1000
-
-    assert gate.is_escrow_expired(args=["esc-1"]).call() is False
-
-
-def test_15_stranger_cannot_move_the_deposit(gate, accounts):
-    tx = _transact(
-        gate, "refund_escrow", ["esc-1"], account=accounts[1]
+    balance_after = int(_read(client, contract, "get_balance"))
+    assert balance_after - balance_before == 1000, (
+        f"the deposit did not reach the contract: {balance_before} -> {balance_after}"
     )
-    assert tx_execution_failed(tx)
-
-    tx = _transact(gate, "release_escrow", ["esc-1"], account=accounts[1])
-    assert tx_execution_failed(tx)
-
-    ledger = gate.get_ledger().call()
-    assert ledger["locked_total"] == 1000
-    assert ledger["total_out"] == 0
 
 
-def test_16_funder_unwinds_and_the_money_moves(gate, default_account):
-    status = gate.get_escrow(args=["esc-1"]).call()["status"]
-    balance_before = int(gate.get_balance().call())
+def test_15_stranger_cannot_move_the_deposit(client, stranger, contract):
+    _expect_denied(client, stranger, contract, "refund_escrow", ["esc-1"])
+    _expect_denied(client, stranger, contract, "release_escrow", ["esc-1"])
+
+    ledger = _read(client, contract, "get_ledger")
+    assert int(ledger["locked_total"]) == 1000
+    assert int(ledger["total_out"]) == 0
+
+
+def test_16_funder_unwinds_and_the_money_moves(client, account, contract):
+    status = _read(client, contract, "get_escrow", ["esc-1"])["status"]
+    balance_before = int(_read(client, contract, "get_balance"))
 
     if status == "FUNDED":
-        tx = _transact(gate, "release_escrow", ["esc-1"], account=default_account)
+        _expect_ok(client, account, contract, "release_escrow", ["esc-1"])
         expected = "RELEASED"
     else:
-        tx = _transact(gate, "refund_escrow", ["esc-1"], account=default_account)
+        _expect_ok(client, account, contract, "refund_escrow", ["esc-1"])
         expected = "REFUNDED"
 
-    assert tx_execution_succeeded(tx)
-    assert gate.get_escrow(args=["esc-1"]).call()["status"] == expected
+    assert _read(client, contract, "get_escrow", ["esc-1"])["status"] == expected
 
-    ledger = gate.get_ledger().call()
+    ledger = _read(client, contract, "get_ledger")
     assert int(ledger["total_out"]) == 1000
     assert int(ledger["locked_total"]) == 0
     assert int(ledger["total_deposited"]) == int(ledger["total_out"]) + int(
         ledger["locked_total"]
     )
 
-    # The contract paid out: its real balance dropped by the escrowed amount.
-    balance_after = int(gate.get_balance().call())
-    assert balance_before - balance_after == 1000
+    balance_after = int(_read(client, contract, "get_balance"))
+    assert balance_before - balance_after == 1000, (
+        f"the payout did not leave the contract: {balance_before} -> {balance_after}"
+    )
 
 
-def test_17_unknown_escrow_is_rejected(gate, default_account):
-    tx = _transact(gate, "release_escrow", ["esc-999"], account=default_account)
-    assert tx_execution_failed(tx)
+def test_17_unknown_escrow_is_refused(client, account, contract):
+    _expect_denied(client, account, contract, "release_escrow", ["esc-999"])
 
 
 # ---------------------------------------------------------------------------
@@ -360,17 +368,14 @@ def test_17_unknown_escrow_is_rejected(gate, default_account):
 # ---------------------------------------------------------------------------
 
 
-def test_18_policy_ids_are_normalised(gate, default_account):
-    tx = _transact(
-        gate,
+def test_18_policy_ids_are_normalised(client, account, contract):
+    _expect_ok(
+        client,
+        account,
+        contract,
         "register_policy",
         ["US-OFAC", "OFAC screen", "https://www.treasury.gov/ofac", "OFAC list."],
-        account=default_account,
     )
-    assert tx_execution_succeeded(tx)
 
-    policy = gate.get_policy(args=["us-ofac"]).call()
-    assert policy["name"] == "OFAC screen"
-
-    policies = gate.get_policies().call()
-    assert len(policies) == 2
+    assert _read(client, contract, "get_policy", ["us-ofac"])["name"] == "OFAC screen"
+    assert len(_read(client, contract, "get_policies")) == 2

@@ -162,13 +162,14 @@ as descriptive text that is never fed back into a decision.
 ## Integration on studionet
 
 `default_account` signs the deploy and the owner-only calls; `accounts[1]` plays
-the stranger in the adversarial cases. In CI those two signers are unlocked from
-`tests/tester1-keystore.json` and `tests/tester2-keystore.json` by
-`scripts/pin_test_accounts.py`, which rewrites `gltest.config.yaml` for the run —
-so the committed config stays env-free and direct-mode tests never need secrets.
+the stranger in the adversarial cases. The suite deploys the contract **once**
+for the whole module and talks to it through the plain `genlayer_py` client, the
+same shape the other GenLayer projects here use: receipts judged by
+`status_name`, a ten second poll, and a retry around the calls that depend on
+live LLM consensus.
 
 ```bash
-gltest tests/integration/ -v -s --network studionet
+pytest tests/integration -v -s
 ```
 
 The suite exercises every method in order: policy registry and its
@@ -208,9 +209,10 @@ repository (`tests/tester1-keystore.json`, `tests/tester2-keystore.json`).
 
 1. send GEN to the tester1 address above — a fraction of one GEN is plenty, the
    escrow tests deposit 1000 wei;
-2. run the workflow (or `gltest tests/integration/ -v -s --network studionet`);
-3. CI rewrites `gltest.config.yaml` from the keystores, so `default_account` is
-   tester1 and `accounts[1]` is tester2 — the same addresses on every run;
+2. run the suite (or start the workflow): `pytest tests/integration -v -s`;
+3. `scripts/wallet.py` unlocks `tests/tester1-keystore.json`, so the deploy and
+   every owner call are signed by tester1 and `accounts[1]` is tester2 — the
+   same addresses on every run;
 4. `create_escrow` then moves real value out of tester1, and the run finishes
    with `release_escrow` (pays tester2) or `refund_escrow` (back to tester1).
    The suite asserts the contract's real balance moved by exactly the deposit
@@ -284,8 +286,8 @@ genvm-lint check contracts/ClauseGuard.py
 # 2. direct-mode tests — in-memory, mocked web + LLM
 pytest tests/direct/ -v
 
-# 3. integration tests — needs GenLayer Studio (Docker) or hosted studionet
-gltest tests/integration/ -v -s --network studionet
+# 3. integration tests — one deploy, real network, live LLM consensus
+pytest tests/integration -v -s
 ```
 
 ## Developing without a terminal
