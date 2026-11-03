@@ -584,6 +584,62 @@ def test_19c_every_view_answers(client, account, contract):
     assert int(summary["policies"]) == len(policies)
 
 
+def test_20a_unknown_assessment_escrow_is_orphaned_and_refundable(
+    client, account, stranger, contract
+):
+    """A deposit against an id that does not exist must never be stranded."""
+    _expect_ok(
+        client,
+        account,
+        contract,
+        "create_escrow",
+        ["ca-999", stranger.address, "orphan"],
+        value=1000,
+    )
+
+    escrows = _read(client, contract, "get_escrows")
+    mine = [
+        escrow
+        for escrow in escrows.values()
+        if escrow["funder"].lower() == account.address.lower() and escrow["status"] == "ORPHAN"
+    ]
+    assert mine, "the refused deposit was not stored as an orphan"
+    orphan = max(mine, key=lambda row: int(str(row["escrow_id"]).split("-")[-1]))
+    escrow_id = orphan["escrow_id"]
+    assert orphan["assessment_id"] == ""
+
+    # An orphan is not a payment: nobody can release it, and only the funder
+    # (or the timeout) can refund it.
+    _expect_denied(client, account, contract, "release_escrow", [escrow_id])
+    _expect_denied(client, stranger, contract, "refund_escrow", [escrow_id])
+    _expect_denied(client, stranger, contract, "release_escrow", [escrow_id])
+
+    _expect_ok(client, account, contract, "refund_escrow", [escrow_id])
+    assert _read(client, contract, "get_escrow", [escrow_id])["status"] == "REFUNDED"
+
+
+def test_20b_ownership_guards(client, account, stranger, contract):
+    _expect_denied(
+        client, account, contract, "transfer_ownership", ["0x" + "0" * 40]
+    )
+    _expect_denied(client, stranger, contract, "accept_ownership")
+    _expect_denied(
+        client, stranger, contract, "transfer_ownership", [stranger.address]
+    )
+
+
+def test_20c_assess_on_an_inactive_policy_is_refused(client, account, contract):
+    _expect_ok(client, account, contract, "set_policy_active", ["paid-policy", False])
+    _expect_denied(
+        client,
+        account,
+        contract,
+        "assess",
+        ["paid-policy", "ACME", "Vendor", "10 EUR", "inactive", "inactive-ref"],
+    )
+    _expect_ok(client, account, contract, "set_policy_active", ["paid-policy", True])
+
+
 def test_20_private_host_is_refused(client, account, contract):
     _expect_denied(
         client,
