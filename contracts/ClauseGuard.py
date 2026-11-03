@@ -364,7 +364,7 @@ def _build_verdict(raw, rules_text: str) -> dict:
         "verdict": decision,
         "risk_level": level,
         "rule_quote": quote,
-        "rules_digest": _digest_text(rules_excerpt),
+        "rules_digest": _digest_text(rules_text),
         "findings": findings,
     }
 
