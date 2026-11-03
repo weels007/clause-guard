@@ -435,7 +435,7 @@ code { background: var(--brass-dim); padding: 0.08em 0.38em; border-radius: 5px;
 .panel::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; border-bottom-right-radius: var(--radius); }
 .panel + .panel { margin-top: 16px; }
 
-.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; min-width: 0; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; min-width: 0; flex-wrap: wrap; }
 .panel-head h2 { font-size: 18px; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(146px, 1fr)); gap: 12px; margin-bottom: 18px; }
@@ -638,9 +638,12 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 
 .escrow-card {
   display: grid; gap: 10px; padding: 16px; border-radius: var(--radius-sm);
-  border: 1px solid var(--line); background: rgba(243, 236, 223, 0.024);
+  border: 1px solid var(--line); background: rgba(243, 236, 223, 0.024); min-width: 0;
 }
-.escrow-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.escrow-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.escrow-top > div { min-width: 0; flex: 1 1 60%; }
+.escrow-top .list-title { white-space: normal; }
+.escrow-top .list-sub { white-space: normal; overflow-wrap: anywhere; }
 .escrow-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 .escrow-warning { font-size: 12px; color: var(--brass); }
 
@@ -775,9 +778,15 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
   .brand-badge { display: none; }
   .brand-mark { width: 30px; height: 30px; }
   .nav-shell { gap: 12px; }
-  #actor-label { display: none; }
-  .actor-switch { padding: 6px 9px; }
-  .wallet-btn { max-width: 136px; padding: 6px 10px; font-size: 10.5px; }
+  /* The demo account switch moves into the menu so the brand and menu fit. */
+  .nav-actions .actor-switch { display: none; }
+  .wallet-btn { max-width: 140px; padding: 6px 10px; font-size: 10.5px; }
+  .mobile-actor {
+    margin-top: 6px; padding: 12px 6px; text-align: left;
+    background: transparent; border: 0; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--brass); cursor: pointer;
+  }
   .hero { padding-top: 36px; }
   .hero-stats { grid-template-columns: repeat(2, 1fr); row-gap: 18px; }
   .field-row, .ref-row { grid-template-columns: 1fr; }

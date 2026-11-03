@@ -283,6 +283,18 @@ export default function App() {
                 {item.label}
               </a>
             ))}
+            {!connected && (
+              <button
+                className="mobile-actor"
+                type="button"
+                onClick={() => {
+                  contract.setActor(state.actor === "owner" ? "stranger" : "owner");
+                  setMenuOpen(false);
+                }}
+              >
+                acting as {state.actor} · switch account
+              </button>
+            )}
           </div>
         )}
       </header>
