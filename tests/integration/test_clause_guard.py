@@ -40,12 +40,37 @@ GUIDANCE = (
 ALLOWED_VERDICTS = ("COMPLIANT", "NON_COMPLIANT", "REVIEW")
 
 
-def _accepted(receipt) -> bool:
-    """The transaction made it through consensus; it was not rejected."""
-    return isinstance(receipt, dict) and receipt.get("status_name") in (
-        "ACCEPTED",
-        "FINALIZED",
-    )
+def _execution_succeeded(receipt) -> bool:
+    """Consensus agreed AND the call did not roll back.
+
+    A contract that raises a UserError still produces an ACCEPTED transaction:
+    the committee agrees that the call rolled back (execution_result ERROR,
+    payload "[EXPECTED]:..."). Only execution_result SUCCESS means the state
+    change happened.
+    """
+    if not isinstance(receipt, dict):
+        return False
+    if receipt.get("status_name") not in ("ACCEPTED", "FINALIZED"):
+        return False
+
+    leader = (receipt.get("consensus_data") or {}).get("leader_receipt")
+    if isinstance(leader, list):
+        leader = leader[0] if leader else None
+    if isinstance(leader, dict):
+        return leader.get("execution_result") == "SUCCESS"
+
+    return str(receipt.get("tx_execution_result_name", "")) == "FINISHED_WITH_RETURN"
+
+
+def _rollback_reason(receipt) -> str:
+    if not isinstance(receipt, dict):
+        return str(receipt)
+    leader = (receipt.get("consensus_data") or {}).get("leader_receipt")
+    if isinstance(leader, list):
+        leader = leader[0] if leader else None
+    if isinstance(leader, dict) and isinstance(leader.get("result"), dict):
+        return str(leader["result"].get("payload", ""))
+    return str(receipt.get("result_name"))
 
 
 @pytest.fixture(scope="module")
@@ -95,18 +120,22 @@ def _expect_ok(client, account, contract, method, args=None, value=0, attempts=3
     last = None
     for attempt in range(attempts):
         result = _attempt(client, account, contract, method, args, value)
-        if _accepted(result):
+        if _execution_succeeded(result):
             return result
         last = result
         if attempt < attempts - 1:
             print(f"  {method} did not reach consensus, retrying")
             time.sleep(RETRY_PAUSE)
-    raise AssertionError(f"{method} did not reach consensus: {last}")
+    raise AssertionError(
+        f"{method} did not reach consensus: {_rollback_reason(last)}"
+    )
 
 
 def _expect_denied(client, account, contract, method, args=None, value=0):
     result = _attempt(client, account, contract, method, args, value)
-    assert not _accepted(result), f"{method} should have been refused: {result}"
+    assert not _execution_succeeded(result), (
+        f"{method} should have been refused, but it succeeded: {result}"
+    )
     return result
 
 

@@ -60,7 +60,7 @@ def test_policy_is_locked_after_first_assessment(
         json.dumps(
             {
                 "verdict": "COMPLIANT",
-                "risk_score": 10,
+                "risk_level": "LOW",
                 "rule_quote": QUOTE,
                 "findings": "article 4",
             }

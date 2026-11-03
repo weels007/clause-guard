@@ -237,7 +237,7 @@ def test_missing_submit_ref_reverts(direct_vm, direct_deploy, direct_owner):
         contract.assess(POLICY_ID, "A", "B", "100 EUR", "context", "   ")
 
 
-def test_ungrounded_quote_fails_the_assessment(
+def test_ungrounded_quote_downgrades_to_review(
     direct_vm, direct_deploy, direct_owner
 ):
     contract = _setup(direct_vm, direct_deploy, direct_owner)
@@ -249,8 +249,16 @@ def test_ungrounded_quote_fails_the_assessment(
         quote="Transfers to any party are always permitted without limit.",
     )
 
-    with direct_vm.expect_revert("[LLM_ERROR]:quote_not_in_rules"):
-        contract.assess(POLICY_ID, "A", "B", "100 EUR", "context", "ref-1")
+    # A citation that is not in the source cannot certify anything, but it must
+    # not deadlock consensus either: the verdict is recorded as REVIEW.
+    assessment_id = contract.assess(
+        POLICY_ID, "A", "B", "100 EUR", "context", "ref-1"
+    )
+
+    record = contract.get_assessment(assessment_id)
+    assert record["verdict"] == "REVIEW"
+    assert record["rule_quote"] == ""
+    assert record["risk_band"] == "LOW"
 
 
 def test_caller_text_cannot_break_prompt_structure(

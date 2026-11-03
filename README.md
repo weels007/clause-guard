@@ -183,8 +183,8 @@ policy-id normalisation.
 Two facts about it:
 
 - the assessment verdict is whatever consensus produced, so the tests assert
-  that consensus happened and that the stored record is well formed (score is a
-  10-point bucket, citation is grounded), never which verdict came out;
+  that consensus happened and that the stored record is well formed (the score
+  is a fixed representative of the agreed level), never which verdict came out;
 - the escrow unwind branches on the stored status — `FUNDED` releases to the
   payee, `ORPHAN` refunds to the funder — so one real transfer still happens
   either way.
