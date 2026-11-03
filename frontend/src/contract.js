@@ -31,6 +31,9 @@ const ERROR_TEXT = {
   wallet_required: "Connect an EVM wallet first.",
   unknown_contract: "No contract address is configured yet.",
   policy_exists: "That policy id is already registered.",
+  policy_fee_required: "Registering a policy costs a small fee. Connect a wallet with enough GEN and try again.",
+  no_fees: "There are no registration fees to withdraw.",
+  fees_not_held: "The contract does not hold the fees it owes.",
   policy_limit: "The contract has reached its policy limit.",
   empty_policy_id: "A policy id is required.",
   invalid_policy_id: "Use lowercase letters, digits and - _ . only.",
@@ -612,7 +615,7 @@ export function createContract() {
   function compose() {
     const simState = sim.getState();
     if (!isChain()) {
-      return { ...simState, mode: "sim", address: "", loading, tx, chainError };
+      return { ...simState, mode: "sim", address: "", loading, tx, chainError, policyFee: { fee_wei: 0, pending: 0 } };
     }
     const escrows = chainData?.escrows || {};
     const usedAssessments = {};
@@ -631,6 +634,7 @@ export function createContract() {
       nextEscrowId: 0,
       ledger: chainData?.ledger || { total_deposited: 0, total_out: 0, locked_total: 0 },
       balance: chainData?.balance ?? 0,
+      policyFee: chainData?.policyFee || { fee_wei: 0, pending: 0 },
       actor: "owner",
       wallet: simState.wallet,
       mode: "chain",
@@ -660,19 +664,26 @@ export function createContract() {
 
   const actorAddress = () => (isChain() ? sim.getState().wallet?.address || "" : sim.actorAddress());
 
+  const isOwnerNow = () => {
+    const me = actorAddress();
+    return Boolean(me) && Boolean(state.owner) && me.toLowerCase() === state.owner.toLowerCase();
+  };
+
   async function refresh() {
     if (!isChain()) return;
     loading = true;
     sync();
     try {
-      const [owner, pendingOwner, policies, assessments, escrows, ledger, balance] = await Promise.all([
+      const optional = (promise) => promise.catch(() => null);
+      const [owner, pendingOwner, policies, assessments, escrows, ledger, balance, policyFee] = await Promise.all([
         readView(address, "get_owner"),
         readView(address, "get_pending_owner"),
         readView(address, "get_policies"),
         readView(address, "get_assessments"),
-        readView(address, "get_escrows"),
+        optional(readView(address, "get_escrows")),
         readView(address, "get_ledger"),
         readView(address, "get_balance"),
+        optional(readView(address, "get_policy_fee")),
       ]);
       chainData = {
         owner: String(owner || ""),
@@ -686,6 +697,10 @@ export function createContract() {
           locked_total: Number(ledger?.locked_total || 0),
         },
         balance: Number(balance || 0),
+        policyFee: {
+          fee_wei: Number(policyFee?.fee_wei || 0),
+          pending: Number(policyFee?.pending || 0),
+        },
       };
       chainError = "";
     } catch (error) {
@@ -752,10 +767,7 @@ export function createContract() {
     refresh,
 
     actorAddress,
-    isOwner: () => {
-      const me = actorAddress();
-      return Boolean(me) && Boolean(state.owner) && me.toLowerCase() === state.owner.toLowerCase();
-    },
+    isOwner: isOwnerNow,
 
     setActor(actor) {
       if (isChain()) return;
@@ -791,7 +803,9 @@ export function createContract() {
 
     async registerPolicy(payload) {
       if (!isChain()) return sim.registerPolicy(payload);
-      await chainWrite("register_policy", [payload.policy_id, payload.name, payload.source_url, payload.guidance]);
+      /* The owner seeds rules for free; everyone else posts the anti-spam fee. */
+      const value = isOwnerNow() ? 0 : Number(state.policyFee?.fee_wei || 0);
+      await chainWrite("register_policy", [payload.policy_id, payload.name, payload.source_url, payload.guidance], value);
     },
 
     async updatePolicy(payload) {

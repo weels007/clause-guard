@@ -38,6 +38,8 @@ GUIDANCE = (
     "Any other transfer is permitted."
 )
 ALLOWED_VERDICTS = ("COMPLIANT", "NON_COMPLIANT", "REVIEW")
+# Mirrors POLICY_FEE_WEI in contracts/ClauseGuard.py.
+POLICY_FEE_WEI = 1000
 
 
 def _execution_succeeded(receipt) -> bool:
@@ -241,7 +243,7 @@ def test_02_duplicate_policy_is_refused(client, account, contract):
     )
 
 
-def test_03_non_owner_cannot_register(client, stranger, contract):
+def test_03_non_owner_must_pay_the_policy_fee(client, stranger, contract):
     _expect_denied(
         client,
         stranger,
@@ -249,6 +251,22 @@ def test_03_non_owner_cannot_register(client, stranger, contract):
         "register_policy",
         ["intruder", "Intruder policy", RULES_URL, GUIDANCE],
     )
+
+
+def test_03b_stranger_registers_by_paying_the_fee(client, stranger, contract):
+    _expect_ok(
+        client,
+        stranger,
+        contract,
+        "register_policy",
+        ["paid-policy", "Paid policy", RULES_URL, GUIDANCE],
+        value=POLICY_FEE_WEI,
+        verify=lambda: _has_policy(client, contract, "paid-policy"),
+    )
+
+    policy = _read(client, contract, "get_policy", ["paid-policy"])
+    assert policy["creator"].lower() == stranger.address.lower()
+    assert int(policy["fee_paid"]) == POLICY_FEE_WEI
 
 
 def test_04_insecure_source_url_is_refused(client, account, contract):

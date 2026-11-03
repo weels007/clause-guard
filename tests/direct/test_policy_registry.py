@@ -6,6 +6,7 @@ POLICY_ID = "eu-payments"
 RULES_URL = "https://rules.example.com/eu/payments"
 GUIDANCE = "Transfers above 10000 EUR to a sanctioned counterparty are prohibited."
 QUOTE = "sanctioned transfers are prohibited"
+POLICY_FEE_WEI = 1000
 
 
 def test_owner_can_register_policy(direct_vm, direct_deploy, direct_owner):
@@ -96,12 +97,55 @@ def test_duplicate_policy_reverts(direct_vm, direct_deploy, direct_owner):
         contract.register_policy(POLICY_ID, "duplicate", RULES_URL, GUIDANCE)
 
 
-def test_non_owner_cannot_register(direct_vm, direct_deploy, direct_alice):
+def test_non_owner_must_pay_the_policy_fee(direct_vm, direct_deploy, direct_alice):
     contract = direct_deploy("contracts/ClauseGuard.py")
     direct_vm.sender = direct_alice
 
-    with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
+    with direct_vm.expect_revert("[EXPECTED]:policy_fee_required"):
         contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
+
+
+def test_non_owner_registers_by_paying_the_fee(
+    direct_vm, direct_deploy, direct_owner, direct_alice
+):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+    owner = contract.get_owner()
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = POLICY_FEE_WEI
+    contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
+    direct_vm.value = 0
+
+    policy = contract.get_policy(POLICY_ID)
+    assert policy["creator"] != owner
+    assert policy["fee_paid"] == POLICY_FEE_WEI
+    assert contract.get_policy_fee()["pending"] == POLICY_FEE_WEI
+
+
+def test_fee_can_be_overpaid_and_the_owner_withdraws_it(
+    direct_vm, direct_deploy, direct_owner, direct_alice, direct_bob
+):
+    contract = direct_deploy("contracts/ClauseGuard.py")
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = POLICY_FEE_WEI * 2
+    contract.register_policy(POLICY_ID, "EU payments screen", RULES_URL, GUIDANCE)
+    direct_vm.value = 0
+
+    assert contract.get_policy(POLICY_ID)["fee_paid"] == POLICY_FEE_WEI * 2
+    assert contract.get_policy_fee()["pending"] == POLICY_FEE_WEI * 2
+
+    # Anyone else cannot take the fees out.
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("[EXPECTED]:unauthorized"):
+        contract.withdraw_policy_fees()
+
+    direct_vm.sender = direct_owner
+    contract.withdraw_policy_fees()
+    assert contract.get_policy_fee()["pending"] == 0
+
+    with direct_vm.expect_revert("[EXPECTED]:no_fees"):
+        contract.withdraw_policy_fees()
 
 
 def test_non_owner_cannot_deactivate(direct_vm, direct_deploy, direct_alice):

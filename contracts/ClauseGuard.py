@@ -42,6 +42,12 @@ MIN_QUOTE_CHARS = 20
 MAX_POLICIES = 100
 MAX_ASSESSMENTS = 5000
 
+# Anyone may register a policy, but a non-owner has to post this fee. It is held
+# by the contract and withdrawable by the owner, so a throwaway rule costs real
+# money while nothing is burned or trapped. The owner registers for free
+# (governance and the starter policy).
+POLICY_FEE_WEI = 1000
+
 # Escrow lifecycle. Money only ever leaves on an explicit call by the funder.
 ESCROW_FUNDED = "FUNDED"
 ESCROW_RELEASED = "RELEASED"
@@ -83,6 +89,8 @@ class Policy:
     active: bool
     assessments: u32
     version: u32
+    creator: Address
+    fee_paid: u256
 
 
 @allow_storage
@@ -429,6 +437,8 @@ def _policy_to_dict(policy_id: str, policy) -> dict:
         "active": policy.active,
         "assessments": policy.assessments,
         "version": policy.version,
+        "creator": _addr_hex(policy.creator),
+        "fee_paid": int(policy.fee_paid),
     }
 
 
@@ -474,6 +484,7 @@ class ClauseGuard(gl.Contract):
     total_deposited: u256
     total_out: u256
     locked_total: u256
+    policy_fees_pending: u256
 
     def __init__(self):
         self.owner = gl.message.sender_address
@@ -499,17 +510,23 @@ class ClauseGuard(gl.Contract):
     # policy registry
     # ------------------------------------------------------------------
 
-    @gl.public.write
+    @gl.public.write.payable
     def register_policy(
         self, policy_id: str, name: str, source_url: str, guidance: str
     ) -> None:
-        self._require_owner()
-
         normalized = _normalize_policy_id(policy_id)
         if normalized in self.policies:
             raise gl.vm.UserError(ERROR_EXPECTED + ":policy_exists")
         if self.policy_count >= MAX_POLICIES:
             raise gl.vm.UserError(ERROR_EXPECTED + ":policy_limit")
+
+        sender = gl.message.sender_address
+        fee = int(gl.message.value)
+        # Anyone can add a rule page, but only the owner does it for free. A fee
+        # makes a throwaway policy cost money, which is what keeps the registry
+        # readable: the fee is never burned, the owner withdraws it.
+        if not _addr_eq(sender, self.owner) and fee < POLICY_FEE_WEI:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":policy_fee_required")
 
         clean_name = _sanitize(name, MAX_NAME_CHARS)
         if not clean_name:
@@ -532,20 +549,28 @@ class ClauseGuard(gl.Contract):
             active=True,
             assessments=u32(0),
             version=u32(1),
+            creator=sender,
+            fee_paid=u256(fee),
         )
         self.policy_count += 1
+        if fee > 0:
+            self.policy_fees_pending += u256(fee)
 
     @gl.public.write
     def update_policy(
         self, policy_id: str, name: str, source_url: str, guidance: str
     ) -> None:
-        self._require_owner()
-
         normalized = _normalize_policy_id(policy_id)
         if normalized not in self.policies:
             raise gl.vm.UserError(ERROR_EXPECTED + ":unknown_policy")
 
         policy = self.policies[normalized]
+        sender = gl.message.sender_address
+        # The owner moderates; whoever paid the registration fee may fix their own
+        # rule page until an assessment locks it.
+        if not _addr_eq(sender, self.owner) and not _addr_eq(sender, policy.creator):
+            raise gl.vm.UserError(ERROR_EXPECTED + ":unauthorized")
+
         if policy.assessments > 0:
             # Assessments must stay reproducible against the rules they used.
             raise gl.vm.UserError(ERROR_EXPECTED + ":policy_locked")
@@ -600,6 +625,25 @@ class ClauseGuard(gl.Contract):
 
         self.owner = gl.message.sender_address
         self.pending_owner = Address("0x" + ZERO_HEX)
+
+    @gl.public.write
+    def withdraw_policy_fees(self) -> None:
+        """Owner collects the registration fees; the contract holds none of it."""
+        self._require_owner()
+
+        amount = int(self.policy_fees_pending)
+        if amount <= 0:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":no_fees")
+
+        try:
+            contract_balance = int(self.balance)
+        except Exception:
+            contract_balance = 0
+        if contract_balance > 0 and contract_balance < amount:
+            raise gl.vm.UserError(ERROR_EXPECTED + ":fees_not_held")
+
+        self.policy_fees_pending = u256(0)
+        _pay_out(self.owner, amount)
 
     # ------------------------------------------------------------------
     # assessment
@@ -968,6 +1012,14 @@ Decision rules:
             "reference": escrow.reference,
             "status": escrow.status,
             "created_ts": int(escrow.created_ts),
+        }
+
+    @gl.public.view
+    def get_policy_fee(self) -> dict:
+        """What registering a policy costs, and what the owner can withdraw."""
+        return {
+            "fee_wei": POLICY_FEE_WEI,
+            "pending": int(self.policy_fees_pending),
         }
 
     @gl.public.view

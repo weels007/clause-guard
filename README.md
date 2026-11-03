@@ -60,9 +60,10 @@ on differing stack detail.
 
 | Method | Who | Purpose |
 |---|---|---|
-| `register_policy(policy_id, name, source_url, guidance)` | owner | Add a rules-backed policy |
-| `update_policy(policy_id, name, source_url, guidance)` | owner | Change a policy that has no assessments yet |
+| `register_policy(policy_id, name, source_url, guidance)` (payable) | owner free; anyone else posts `POLICY_FEE_WEI` | Add a rules-backed policy |
+| `update_policy(policy_id, name, source_url, guidance)` | owner or the policy's creator | Change a policy that has no assessments yet |
 | `set_policy_active(policy_id, active)` | owner | Enable/disable a policy |
+| `withdraw_policy_fees()` | owner | Collect the registration fees the contract holds |
 | `transfer_ownership(new_owner)` | owner | Nominate a successor |
 | `accept_ownership()` | the nominee | Take over; a typo cannot lose control |
 | `assess(policy_id, subject, counterparty, amount, context, submit_ref)` | anyone | Run the assessment, returns assessment id (`ca-1`, `ca-2`, …) |
@@ -85,6 +86,7 @@ on differing stack detail.
 | `is_escrow_expired(escrow_id)` | whether the 30-day unwind fallback is active |
 | `get_ledger()` | total_deposited, total_out, locked_total |
 | `get_balance()` | GEN actually held by the contract |
+| `get_policy_fee()` | `fee_wei` for a non-owner registration, and `pending` fees the owner can withdraw |
 | `get_summary()` | totals: total, compliant, non_compliant, review, high_risk, policies |
 
 Risk levels: `LOW` (stored as 20), `MEDIUM` (50), `HIGH` (80). The level is the
@@ -328,8 +330,7 @@ policy, and every visitor then reads and writes that same contract. There is
 deliberately no deploy button: using the console can never create another
 contract.
 
-`frontend/src/chain.js` talks to GenLayer Studio through **genlayer-js**: reads go
-through a wallet-less client (`readContract`), writes are signed by the connected
+`frontend/src/chain.js` talks to GenLayer Studio through **genlayer-js**: reads gothrough a wallet-less client (`readContract`), writes are signed by the connected
 EVM wallet (`writeContract`), and every write waits for the committee
 (`waitForTransactionReceipt({ waitUntil: "decided" })`) before it is treated as
 done. A write only counts when consensus accepted it *and* execution returned
@@ -338,6 +339,12 @@ with the same friendly copy the simulator uses. Reads refresh on load and after
 every write, and the Assess result adds the on-chain receipt — status, execution
 result, leader vote, validator count and rounds — next to the agreement the
 contract stored. The header badge says `on-chain` or `simulation`.
+
+**Anyone may add a policy.** On chain a non-owner pays a small, one-off
+registration fee (`POLICY_FEE_WEI`, held by the contract and withdrawable by the
+owner); the owner registers for free. The fee is what keeps the registry from
+filling with throwaway rule pages, and a policy still locks the moment it produces
+an assessment, so a verdict can never be rewritten underneath it.
 
 While no address is recorded yet, the console falls back to
 `frontend/src/contract.js`, a deterministic stand-in with the same guards, error

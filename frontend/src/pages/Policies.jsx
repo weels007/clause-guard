@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { humanizeError } from "../contract.js";
-import { shortAddress } from "../format.js";
+import { formatWei, shortAddress } from "../format.js";
 import { toast } from "../ui.jsx";
 
 const EMPTY = { policy_id: "", name: "", source_url: "", guidance: "" };
@@ -17,6 +17,9 @@ export default function Policies({ contract, state }) {
   const isOwner = contract.isOwner();
   const connected = Boolean(state.wallet?.address);
   const pending = state.pendingOwner !== ZERO;
+  const fee = Number(state.policyFee?.fee_wei || 0);
+  /* On chain, anyone may add a policy, but a non-owner posts the anti-spam fee. */
+  const mustPay = state.mode === "chain" && connected && !isOwner;
 
   const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
 
@@ -105,8 +108,8 @@ export default function Policies({ contract, state }) {
 
       {connected && !isOwner && (
         <p className="wallet-note">
-          Your wallet ({shortAddress(contract.actorAddress())}) is not the contract owner, so policy writes are refused. Act as the demo
-          owner to register one.
+          Your wallet ({shortAddress(contract.actorAddress())}) is not the contract owner. You can still register your own policy by
+          paying the {formatWei(fee)} wei registration fee; owner-only actions (enable/disable, ownership) stay refused.
         </p>
       )}
 
@@ -207,10 +210,17 @@ export default function Policies({ contract, state }) {
               </div>
             )}
 
+            {mustPay && !editing && (
+              <p className="hint" style={{ marginTop: 0 }}>
+                One-off registration fee, held by the contract and withdrawable by the owner. The policy locks once its first
+                assessment runs.
+              </p>
+            )}
+
             <div className="form-actions">
               <button className="btn btn-primary" type="submit" aria-busy={busy} disabled={busy}>
                 {busy ? <span className="spin" /> : null}
-                {editing ? "Save changes" : "Register policy"}
+                {editing ? "Save changes" : mustPay ? `Register · ${formatWei(fee)} wei` : "Register policy"}
               </button>
             </div>
           </form>

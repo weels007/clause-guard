@@ -13,6 +13,7 @@ site finds a policy to assess against instead of an empty registry.
 """
 
 import argparse
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -30,6 +31,7 @@ CONFIG_PATH = ROOT / "frontend" / "src" / "config.js"
 POLL_INTERVAL = 10_000
 POLL_RETRIES = 60
 ADDRESS_RE = re.compile(r'CONTRACT_ADDRESS\s*=\s*"([^"]*)"')
+REVISION_RE = re.compile(r'CONTRACT_REVISION\s*=\s*"([^"]*)"')
 ADDRESS_VALUE = re.compile(r"0x[0-9a-fA-F]{40}")
 
 # Public, stable, text-only: validators must be able to fetch it. Same source the
@@ -48,9 +50,15 @@ def recorded_address() -> str:
     return (match.group(1) if match else "").strip()
 
 
-def write_address(address: str) -> None:
+def recorded_revision() -> str:
+    match = REVISION_RE.search(CONFIG_PATH.read_text(encoding="utf-8"))
+    return (match.group(1) if match else "").strip()
+
+
+def write_deployment(address: str, revision: str) -> None:
     source = CONFIG_PATH.read_text(encoding="utf-8")
     updated = ADDRESS_RE.sub(f'CONTRACT_ADDRESS = "{address}"', source, count=1)
+    updated = REVISION_RE.sub(f'CONTRACT_REVISION = "{revision}"', updated, count=1)
     if updated == source:
         raise SystemExit("could not find CONTRACT_ADDRESS in frontend/src/config.js")
     CONFIG_PATH.write_text(updated, encoding="utf-8")
@@ -123,12 +131,16 @@ def main() -> int:
     account = load_account("tester1")
     client = create_client(studionet, account=account)
 
+    code = CONTRACT_PATH.read_text(encoding="utf-8")
+    revision = hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
+
     existing = recorded_address()
-    if existing and not args.force:
-        print(f"[deploy] config already points at {existing}; reusing it")
+    if existing and recorded_revision() == revision and not args.force:
+        print(f"[deploy] config already points at {existing} at revision {revision}; reusing it")
         address = existing
     else:
-        code = CONTRACT_PATH.read_text(encoding="utf-8")
+        if existing:
+            print(f"[deploy] the contract source changed (revision {revision}); deploying a new contract")
         print(f"[deploy] deploying from {account.address}")
         tx_hash = client.deploy_contract(code=code, account=account)
         print(f"[deploy] transaction {tx_hash}")
@@ -141,8 +153,8 @@ def main() -> int:
         if not address:
             raise SystemExit(f"[deploy] no contract address in the receipt: {receipt}")
 
-        write_address(address)
-        print(f"[deploy] ClauseGuard is at {address}")
+        write_deployment(address, revision)
+        print(f"[deploy] ClauseGuard is at {address} (revision {revision})")
 
     ensure_policy(client, account, address)
     return 0
