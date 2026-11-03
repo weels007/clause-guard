@@ -4,18 +4,17 @@ networks:
   localnet:
     url: "http://127.0.0.1:4000/api"
 
-  studionet:
-    # Accounts are generated per run by default, which means a balance sent to
-    # a previous run's address cannot be spent by the next one.
-    #
-    # To pin the signer (so funding an address is meaningful), create three
-    # throwaway keys, add them as repository secrets, and uncomment:
-    #
-    # accounts:
-    #   - "${CLAUSEGUARD_TEST_KEY}"
-    #   - "${CLAUSEGUARD_STRANGER_KEY}"
-    #   - "${CLAUSEGUARD_PAYEE_KEY}"
-    # from: "${CLAUSEGUARD_TEST_KEY}"
+  # Accounts are generated per run by default, so a balance sent to a previous
+  # run's address cannot be spent by the next one. To pin the signer, create
+  # three throwaway keys, add them as repository secrets, and add:
+  #
+  #   accounts:
+  #     - "${CLAUSEGUARD_TEST_KEY}"
+  #     - "${CLAUSEGUARD_STRANGER_KEY}"
+  #     - "${CLAUSEGUARD_PAYEE_KEY}"
+  #   from: "${CLAUSEGUARD_TEST_KEY}"
+  #
+  studionet: {}
 
 paths:
   contracts: "contracts"
