@@ -642,5 +642,5 @@ textarea { resize: vertical; }
      wallet button on a phone. */
   #actor-label { display: none; }
   .actor-switch { padding: 7px 10px; }
-  .wallet-btn { max-width: 118px; padding: 6px 10px; font-size: 12px; }
+  .wallet-btn { max-width: 44vw; padding: 6px 10px; font-size: 12px; }
 }
