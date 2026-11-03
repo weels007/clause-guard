@@ -127,7 +127,7 @@ export function Chip({ verdict }) {
 const PILL_CLASS = { FUNDED: "warn", ORPHAN: "bad", RELEASED: "ok", REFUNDED: "ok" };
 
 export function Pill({ status }) {
-  return <span className={`pill ${PILL[status] || ""}`}>{status || "—"}</span>;
+  return <span className={`pill ${PILL_CLASS[status] || ""}`}>{status || "—"}</span>;
 }
 
 export function Reveal({ children, delay = 0, className = "" }) {

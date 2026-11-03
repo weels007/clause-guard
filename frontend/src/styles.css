@@ -771,11 +771,13 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
   .nav-links { display: none; }
   .menu-btn { display: grid; }
   .shell { width: calc(100% - 32px); }
-  .brand-name { font-size: 16px; }
+  .brand-name { font-size: 15px; }
   .brand-badge { display: none; }
+  .brand-mark { width: 30px; height: 30px; }
+  .nav-shell { gap: 12px; }
   #actor-label { display: none; }
-  .actor-switch { padding: 6px 10px; }
-  .wallet-btn { max-width: 44vw; padding: 6px 10px; font-size: 10.5px; }
+  .actor-switch { padding: 6px 9px; }
+  .wallet-btn { max-width: 136px; padding: 6px 10px; font-size: 10.5px; }
   .hero { padding-top: 36px; }
   .hero-stats { grid-template-columns: repeat(2, 1fr); row-gap: 18px; }
   .field-row, .ref-row { grid-template-columns: 1fr; }
