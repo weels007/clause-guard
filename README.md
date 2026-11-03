@@ -279,15 +279,49 @@ The same trail can be produced without tests: deploy from the Studio UI and use
 its Execute Transactions panel, or use the CLI (`genlayer deploy`,
 `genlayer write`).
 
+## Frontend
+
+`index.html` is a static, dependency-free console for the contract: no build step,
+no framework, no npm install. Open it from the repository root (or the published
+preview link) and it runs.
+
+- **Landing** — what the contract does, the four steps, and the properties that
+  keep the failure modes boring.
+- **Dashboard** — verdict counters, the custody ledger with its invariant, and the
+  most recent assessments.
+- **Policies** — register, edit (while unlocked), enable/disable, and the two-step
+  ownership handover.
+- **Assess** — the full flow, including the citation that was grounded and a
+  side-by-side of what leader and validators compared.
+- **Escrows** — fund against one of your own `COMPLIANT` verdicts, then release or
+  refund, with the timeout rule spelled out.
+- **How it works** — the consensus payload, the citation invariant, the error
+  taxonomy and the money rules.
+
+The header badge reads **simulation** on purpose: `assets/js/store.js` is a
+faithful stand-in for `contracts/ClauseGuard.py` — same guards, same error codes,
+same `ORPHAN`-instead-of-revert deposit rule, same ledger invariant, same
+caller-scoped `submit_ref` replay refusal. State lives in `localStorage` so a
+refresh keeps your work, and **Reset data** puts it back to the seeded demo.
+The switch in the header changes the acting account so the access-control guards
+can be tried from both sides.
+
+Wiring it to a live deployment means replacing that module with a `genlayer-js`
+(or `genlayer_py` behind an HTTP proxy) client exposing the same method names;
+`app.js` only talks to `store.assess`, `store.createEscrow`, and friends.
+
 ## Layout
 
 ```
 contracts/ClauseGuard.py      the Intelligent Contract
 tests/direct/                 in-memory tests (no Docker, milliseconds each)
 tests/integration/            real-network tests (genlayer_py client)
+index.html                    the static console (no build step)
+assets/css/style.css          design system
+assets/js/                    router, views, and the contract stand-in
 gltest.config.yaml            network config, used by direct-mode runs
 .github/workflows/ci.yml      lint + direct-mode tests
-.github/workflows/integration.yml  Studio-mode suite, manual dispatch
+.github/workflows/integration.yml  real-network suite, on push or by hand
 requirements.txt              pinned SDK, test suite, linter
 ```
 
@@ -316,8 +350,10 @@ This repository is set up so the whole loop works through GitHub Actions:
 Push to `main` (or open a pull request) and read the job logs. Direct mode covers
 contract logic, storage, access control, and consensus comparison
 (`tests/direct/test_consensus.py` replays the validator against a stored leader
-result); a failure there is a real failure, not a guess. Only true
-multi-validator behaviour needs `gltest` against Studio.
+result); a failure there is a real failure, not a guess. The integration workflow
+runs itself on any push that touches `contracts/`, `tests/integration/` or
+`scripts/`, and by hand from the Actions tab; only true multi-validator behaviour
+needs the real network.
 
 ## Extending it
 
