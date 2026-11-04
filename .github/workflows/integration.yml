@@ -33,3 +33,6 @@ jobs:
           # Optional: set these to stop relying on the committed password files.
           CLAUSEGUARD_TESTER1_PASSWORD: ${{ secrets.CLAUSEGUARD_TESTER1_PASSWORD }}
           CLAUSEGUARD_TESTER2_PASSWORD: ${{ secrets.CLAUSEGUARD_TESTER2_PASSWORD }}
+          # Optional: the keystores themselves, so no key file needs to be tracked.
+          CLAUSEGUARD_TESTER1_KEYSTORE: ${{ secrets.CLAUSEGUARD_TESTER1_KEYSTORE }}
+          CLAUSEGUARD_TESTER2_KEYSTORE: ${{ secrets.CLAUSEGUARD_TESTER2_KEYSTORE }}

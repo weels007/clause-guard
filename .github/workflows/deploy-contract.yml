@@ -42,6 +42,7 @@ jobs:
       - name: Deploy
         env:
           CLAUSEGUARD_TESTER1_PASSWORD: ${{ secrets.CLAUSEGUARD_TESTER1_PASSWORD }}
+          CLAUSEGUARD_TESTER1_KEYSTORE: ${{ secrets.CLAUSEGUARD_TESTER1_KEYSTORE }}
         run: |
           if [ "${{ inputs.force }}" = "true" ]; then
             python scripts/deploy.py --force
