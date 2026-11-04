@@ -1,5 +1,3 @@
-<div align="center">
-
 # ClauseGuard
 
 **Compliance verdicts you can audit.**
@@ -7,6 +5,8 @@
 An Intelligent Contract that reads a policy's rules from the web, asks an AI
 committee whether a transaction complies, and stores the verdict with the exact
 citation it used.
+
+<div align="center">
 
 <p>
   <a href="https://github.com/weels007/clause-guard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/weels007/clause-guard/actions/workflows/ci.yml/badge.svg"></a>
