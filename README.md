@@ -34,6 +34,26 @@ ClauseGuard turns that into a compliance console: one shared contract, a registr
 of rules-backed policies, an assessment per transaction, and an escrow that can
 only be released by the account that funded it.
 
+## Live on GenLayer Studio
+
+One deployment, not a launcher: every visitor reads and writes the same contract,
+and nobody is ever asked to deploy their own.
+
+| | |
+|---|---|
+| **Contract** | [`0x72900639955909D65cE637d50fb33fc9d4DcE75F`](https://explorer-studio.genlayer.com/address/0x72900639955909D65cE637d50fb33fc9d4DcE75F) |
+| **Network** | GenLayer Studio — chainId `61999` (`0xf22f`), test GEN only |
+| **Console** | React 18 + Vite in `frontend/`, deployed on Vercel with Root Directory `frontend` |
+| **Evidence** | [Actions](https://github.com/weels007/clause-guard/actions) — direct tests, the live studionet suite, and the wallet smoke that drives the address above and prints every transaction hash |
+
+To try it: `cd frontend && npm install && npm run dev`, connect MetaMask or
+Rabby (the chooser lists whichever wallets announce themselves), accept the
+switch to Studio, then run an assessment on the seeded `rfc-2119` policy. Every
+write that lands returns a hash that links straight into the explorer.
+
+There is **no mainnet path**: this is a Studio prototype, the test wallets hold
+test GEN, and the console never asks for a private key.
+
 ## Architecture
 
 ```mermaid
@@ -262,3 +282,7 @@ tests only. Rotate both accounts before the project carries anything of value.
 
 - [CHANGELOG.md](CHANGELOG.md) — the milestones, not every fix.
 - `frontend/src/pages/How.jsx` — the same explanation inside the app.
+
+## License
+
+[MIT](LICENSE).
