@@ -230,21 +230,17 @@ edit by its creator, an enable/disable cycle, an orphan deposit and its refund,
 denied attempts from the stranger, the owner's fee withdrawal and a real
 assessment — printing every transaction hash for the explorer trail.
 
-**Key material at handover.** The two keystores and their passwords are currently
-tracked (they were added before `.gitignore` covered them), and CI relies on the
-files. To cut the repository over to secrets:
+**Key material.** The two tester keystores and their passwords are no longer
+tracked: they live in the private `wallet` repository, and CI reads them from the
+repository secrets `CLAUSEGUARD_TESTER1_KEYSTORE` / `CLAUSEGUARD_TESTER1_PASSWORD`
+and the `TESTER2` pair. `scripts/wallet.py` accepts the keystore as raw JSON or
+base64 and still falls back to `tests/<name>-keystore.json` for a local checkout,
+so a working copy can keep the files there (they are ignored) or export the same
+variables.
 
-1. Add Actions secrets `CLAUSEGUARD_TESTER1_KEYSTORE` and
-   `CLAUSEGUARD_TESTER2_KEYSTORE` (the keystore JSON, raw or base64) plus the two
-   `…_PASSWORD` secrets.
-2. `git rm --cached tests/*-keystore.json tests/*.password` and commit.
-3. `scripts/wallet.py` already falls back to those secrets when the files are
-   absent, so the workflows keep working.
-
-A separate private repository just for the wallets can be used as an offline
-backup, but CI cannot read it without another token, which is again a secret —
-and it would not remove anything from the git history. Rotate both testers (or
-move to fresh production wallets) because the old keys stay in history.
+The old keys remain in the git history, so they are only fit for Studio tests.
+Rotate both accounts — new keystores, new secrets, an updated `wallet` repository
+— before the project carries anything of value.
 
 ### Funding the escrow for real
 

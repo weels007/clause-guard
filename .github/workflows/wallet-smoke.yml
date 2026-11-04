@@ -4,6 +4,7 @@ name: Wallet Smoke
 # wallets, printing every transaction hash, so that address shows a real method
 # trail in the explorer. The integration suite deploys its own throwaway
 # contract; this one exercises the deployment the console actually uses.
+# The wallets come from repository secrets (CLAUSEGUARD_TESTER*_KEYSTORE).
 
 on:
   workflow_dispatch:
